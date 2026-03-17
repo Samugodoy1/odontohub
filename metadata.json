@@ -1,0 +1,5 @@
+{
+  "name": "OdontoHub",
+  "description": "Sistema completo de gestão odontológica com prontuário eletrônico, agenda e controle financeiro.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  --breakpoint-xs: 400px;
+  --breakpoint-tablet-p: 768px;
+  --breakpoint-tablet-l: 900px;
+  --breakpoint-desktop: 1200px;
+}
+
+@layer utilities {
+  @media print {
+    /* Force colors and backgrounds */
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+
+    .no-print, .print-btn {
+      display: none !important;
+    }
+    
+    html, body {
+      background: white !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      height: auto !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+    }
+
+    /* Remove problematic layout styles for printing */
+    * {
+      position: static !important;
+      overflow: visible !important;
+      max-height: none !important;
+      height: auto !important;
+    }
+
+    /* Re-allow relative/absolute for elements that need it inside the document */
+    .print-container, .print-container * {
+      position: relative !important;
+    }
+
+    /* Hide scrollbars on print */
+    ::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* A4 Dimensions */
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    .print-container {
+      width: 210mm !important;
+      min-height: 297mm !important;
+      padding: 20mm !important;
+      margin: auto !important;
+      background: white !important;
+      box-shadow: none !important;
+      border: none !important;
+      display: block !important;
+    }
+  }
+
+  .print-container {
+    background: white;
+    width: 100%;
+    max-width: 210mm;
+    min-height: 297mm;
+    padding: 10mm;
+    margin: 0 auto;
+    transition: all 0.3s ease;
+  }
+
+  @media (min-width: 768px) {
+    .print-container {
+      padding: 20mm;
+    }
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
