@@ -35,8 +35,9 @@ interface ToothData {
 interface OdontogramProps {
   data: Record<number, ToothData>;
   history?: ToothRecord[];
-  onChange: (toothNumber: number, toothData: ToothData) => void;
+  onChange?: (toothNumber: number, toothData: ToothData) => void;
   onAddHistory?: (record: Omit<ToothRecord, 'id'>) => Promise<void>;
+  onSelectProcedure?: (toothNumber: number, procedure: string) => void;
   readOnly?: boolean;
 }
 
@@ -48,20 +49,20 @@ const toothNumbers = {
 };
 
 const statusColors: Record<ToothStatus, string> = {
-  healthy: 'bg-white border-slate-200 text-slate-600',
-  decay: 'bg-rose-500 border-rose-600 text-white',
-  filling: 'bg-blue-500 border-blue-600 text-white',
-  crown: 'bg-amber-600 border-amber-700 text-white',
-  root_canal_done: 'bg-emerald-600 border-emerald-700 text-white',
-  root_canal_needed: 'bg-orange-500 border-orange-600 text-white',
-  implant: 'bg-indigo-600 border-indigo-700 text-white',
-  extraction_done: 'bg-slate-800 border-slate-900 text-white',
-  extraction_needed: 'bg-yellow-400 border-yellow-500 text-yellow-900',
-  fracture: 'bg-red-700 border-red-800 text-white',
-  wear: 'bg-stone-400 border-stone-500 text-white',
-  facet: 'bg-cyan-400 border-cyan-500 text-white',
-  prosthesis: 'bg-purple-500 border-purple-600 text-white',
-  missing: 'bg-slate-200 border-slate-300 text-slate-400',
+  healthy: 'bg-white border-black/5 text-[#64748B]',
+  decay: 'bg-[#EF4444] border-red-600 text-white',
+  filling: 'bg-[#3B82F6] border-blue-600 text-white',
+  crown: 'bg-[#D97706] border-amber-700 text-white',
+  root_canal_done: 'bg-primary border-primary/20 text-white',
+  root_canal_needed: 'bg-[#F59E0B] border-orange-600 text-white',
+  implant: 'bg-[#6366F1] border-indigo-700 text-white',
+  extraction_done: 'bg-[#1E293B] border-slate-900 text-white',
+  extraction_needed: 'bg-[#FACC15] border-yellow-500 text-[#713F12]',
+  fracture: 'bg-[#B91C1C] border-red-800 text-white',
+  wear: 'bg-[#94A3B8] border-slate-500 text-white',
+  facet: 'bg-[#22D3EE] border-cyan-500 text-white',
+  prosthesis: 'bg-[#A855F7] border-purple-600 text-white',
+  missing: 'bg-[#E2E8F0] border-slate-300 text-[#94A3B8]',
 };
 
 const statusLabels: Record<ToothStatus, string> = {
@@ -82,10 +83,11 @@ const statusLabels: Record<ToothStatus, string> = {
 };
 
 export const Odontogram: React.FC<OdontogramProps> = ({ 
-  data, 
+  data = {}, 
   history = [], 
   onChange, 
   onAddHistory,
+  onSelectProcedure,
   readOnly = false 
 }) => {
   const [selectedTooth, setSelectedTooth] = React.useState<number | null>(null);
@@ -119,10 +121,12 @@ export const Odontogram: React.FC<OdontogramProps> = ({
       });
 
       // 2. Update current status in odontogram
-      onChange(selectedTooth, { 
-        status: newRecord.status, 
-        notes: newRecord.notes 
-      });
+      if (onChange) {
+        onChange(selectedTooth, { 
+          status: newRecord.status, 
+          notes: newRecord.notes 
+        });
+      }
 
       setIsModalOpen(false);
       setNewRecord({
@@ -153,9 +157,9 @@ export const Odontogram: React.FC<OdontogramProps> = ({
           type="button"
           onClick={() => handleToothClick(num)}
           className={`
-            w-10 h-12 rounded-lg border-2 flex items-center justify-center text-[10px] font-bold transition-all
+            w-10 h-12 rounded-lg border flex items-center justify-center text-[10px] font-bold transition-all
             ${statusColors[tooth.status]}
-            ${isSelected ? 'ring-4 ring-emerald-500/30 scale-110 z-10' : 'hover:scale-105'}
+            ${isSelected ? 'ring-2 ring-primary scale-110 z-10' : 'hover:scale-105'}
           `}
         >
           {num}
@@ -165,11 +169,11 @@ export const Odontogram: React.FC<OdontogramProps> = ({
   };
 
   return (
-    <div className="space-y-8 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+    <div className="space-y-8 p-6 bg-white rounded-3xl shadow-sm border-none">
       <div className="flex flex-col gap-8 overflow-x-auto pb-4">
         {/* Upper Jaw */}
         <div className="flex justify-center gap-1 min-w-max">
-          <div className="flex gap-1 border-r-2 border-slate-200 pr-2">
+          <div className="flex gap-1 border-r border-slate-50 pr-2">
             {toothNumbers.upperRight.map(renderTooth)}
           </div>
           <div className="flex gap-1 pl-2">
@@ -179,7 +183,7 @@ export const Odontogram: React.FC<OdontogramProps> = ({
 
         {/* Lower Jaw */}
         <div className="flex justify-center gap-1 min-w-max">
-          <div className="flex gap-1 border-r-2 border-slate-200 pr-2">
+          <div className="flex gap-1 border-r border-slate-50 pr-2">
             {[...toothNumbers.lowerRight].reverse().map(renderTooth)}
           </div>
           <div className="flex gap-1 pl-2">
@@ -189,33 +193,33 @@ export const Odontogram: React.FC<OdontogramProps> = ({
       </div>
 
       {/* Legend */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 pt-4 border-t border-slate-200">
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 pt-4 border-t border-slate-50">
         {(Object.entries(statusLabels) as [ToothStatus, string][]).map(([status, label]) => (
           <div key={status} className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full border ${statusColors[status]}`} />
-            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider leading-tight">{label}</span>
+            <div className={`w-2.5 h-2.5 rounded-full border-none ${statusColors[status].split(' ')[0]}`} />
+            <span className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider leading-tight">{label}</span>
           </div>
         ))}
       </div>
 
       {/* Tooth Detail Modal */}
       {isModalOpen && selectedTooth !== null && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#F7F8FA] rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 border-none">
             {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-white">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold border-2 ${statusColors[data[selectedTooth]?.status || 'healthy']}`}>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold border-none ${statusColors[data[selectedTooth]?.status || 'healthy'].split(' ')[0]}`}>
                   {selectedTooth}
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-800">Dente {selectedTooth}</h3>
-                  <p className="text-sm text-slate-500">Histórico Clínico e Procedimentos</p>
+                  <h3 className="text-xl font-bold text-[#0F172A]">Dente {selectedTooth}</h3>
+                  <p className="text-sm text-[#64748B]">Histórico Clínico e Procedimentos</p>
                 </div>
               </div>
               <button 
                 onClick={() => setIsModalOpen(false)}
-                className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+                className="p-2 hover:bg-[#F1F5F9] rounded-full transition-colors text-[#64748B]"
               >
                 <X size={24} />
               </button>
@@ -225,8 +229,8 @@ export const Odontogram: React.FC<OdontogramProps> = ({
               {/* Current Status */}
               <section>
                 <div className="flex items-center gap-2 mb-4">
-                  <Info size={18} className="text-emerald-600" />
-                  <h4 className="font-bold text-slate-800 uppercase tracking-wider text-sm">Status Atual</h4>
+                  <Info size={18} className="text-primary" />
+                  <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Status Atual</h4>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {(Object.entries(statusLabels) as [ToothStatus, string][]).map(([status, label]) => (
@@ -234,10 +238,10 @@ export const Odontogram: React.FC<OdontogramProps> = ({
                       key={status}
                       onClick={() => setNewRecord(prev => ({ ...prev, status }))}
                       className={`
-                        px-3 py-2 rounded-xl text-[10px] font-bold transition-all border text-center
+                        px-3 py-2 rounded-xl text-[10px] font-bold transition-all border-none text-center
                         ${newRecord.status === status 
-                          ? `${statusColors[status]} ring-2 ring-offset-1 ring-emerald-500` 
-                          : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300'}
+                          ? `${statusColors[status].split(' ')[0]} ${statusColors[status].split(' ')[2]} ring-2 ring-offset-1 ring-primary` 
+                          : 'bg-white text-[#64748B] hover:bg-slate-50'}
                       `}
                     >
                       {label}
@@ -249,66 +253,85 @@ export const Odontogram: React.FC<OdontogramProps> = ({
               {/* Clinical History */}
               <section>
                 <div className="flex items-center gap-2 mb-4">
-                  <History size={18} className="text-emerald-600" />
-                  <h4 className="font-bold text-slate-800 uppercase tracking-wider text-sm">Histórico Clínico</h4>
+                  <History size={18} className="text-primary" />
+                  <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Histórico Clínico</h4>
                 </div>
                 {toothHistory.length > 0 ? (
                   <div className="space-y-3">
                     {toothHistory.map((record, idx) => (
-                      <div key={record.id || idx} className="p-4 rounded-xl border border-slate-100 bg-slate-50/30 flex justify-between items-start gap-4">
+                      <div key={record.id || idx} className="p-4 rounded-2xl bg-white shadow-sm flex justify-between items-start gap-4 border-none">
                         <div>
-                          <p className="font-bold text-slate-800">{record.procedure}</p>
-                          {record.notes && <p className="text-sm text-slate-600 mt-1 italic">"{record.notes}"</p>}
-                          <p className="text-[10px] text-slate-400 mt-2 uppercase font-bold">Dentista: {record.dentist_name || 'Não informado'}</p>
+                          <p className="font-bold text-[#0F172A]">{record.procedure}</p>
+                          {record.notes && <p className="text-sm text-[#64748B] mt-1 italic">"{record.notes}"</p>}
+                          <p className="text-[10px] text-[#94A3B8] mt-2 uppercase font-bold">Dentista: {record.dentist_name || 'Não informado'}</p>
                         </div>
-                        <span className="text-xs font-mono text-slate-400 bg-white px-2 py-1 rounded border border-slate-100">
+                        <span className="text-xs font-mono text-[#64748B] bg-[#F8FAFC] px-2 py-1 rounded border-none">
                           {formatDate(record.date)}
                         </span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-8 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                    <p className="text-slate-400 text-sm">Nenhum registro anterior para este dente.</p>
+                  <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-[#64748B] text-sm">Nenhum registro anterior para este dente.</p>
                   </div>
                 )}
               </section>
 
               {/* Add New Procedure */}
               {!readOnly && (
-                <section className="bg-emerald-50/30 p-6 rounded-2xl border border-emerald-100/50">
+                <section className="bg-white p-6 rounded-[24px] shadow-sm border-none">
                   <div className="flex items-center gap-2 mb-4">
-                    <Plus size={18} className="text-emerald-600" />
-                    <h4 className="font-bold text-emerald-800 uppercase tracking-wider text-sm">Adicionar Novo Procedimento</h4>
+                    <Plus size={18} className="text-primary" />
+                    <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Adicionar Novo Procedimento</h4>
                   </div>
+                  
+                  {onSelectProcedure && (
+                    <div className="mb-6">
+                      <p className="text-[10px] font-bold text-[#64748B] uppercase mb-2">Planejar para Plano de Tratamento</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {['Restauração', 'Endodontia', 'Coroa', 'Implante', 'Extração'].map(proc => (
+                          <button
+                            key={proc}
+                            onClick={() => onSelectProcedure(selectedTooth, proc)}
+                            className="px-3 py-2 bg-[#F8FAFC] text-[#0F172A] rounded-xl text-[10px] font-bold hover:bg-primary hover:text-white transition-all border-none"
+                          >
+                            {proc}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="my-4 border-t border-slate-50" />
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Procedimento</label>
+                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Procedimento</label>
                       <input 
                         type="text"
                         value={newRecord.procedure}
                         onChange={(e) => setNewRecord(prev => ({ ...prev, procedure: e.target.value }))}
                         placeholder="Ex: Restauração em resina"
-                        className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Data</label>
+                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Data</label>
                       <input 
                         type="date"
                         value={newRecord.date}
                         onChange={(e) => setNewRecord(prev => ({ ...prev, date: e.target.value }))}
-                        className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm"
                       />
                     </div>
                     <div className="sm:col-span-2 space-y-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Observações</label>
+                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Observações</label>
                       <textarea 
                         value={newRecord.notes}
                         onChange={(e) => setNewRecord(prev => ({ ...prev, notes: e.target.value }))}
                         placeholder="Detalhes adicionais sobre o procedimento..."
                         rows={2}
-                        className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm resize-none"
+                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm resize-none"
                       />
                     </div>
                   </div>
@@ -317,10 +340,10 @@ export const Odontogram: React.FC<OdontogramProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="p-6 border-t border-slate-100 flex items-center justify-end gap-3 bg-slate-50/50">
+            <div className="p-6 border-t border-slate-50 flex items-center justify-end gap-3 bg-white">
               <button 
                 onClick={() => setIsModalOpen(false)}
-                className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                className="px-6 py-2.5 rounded-xl text-sm font-bold text-[#64748B] hover:bg-[#F1F5F9] transition-all border-none"
               >
                 Fechar
               </button>
@@ -328,7 +351,7 @@ export const Odontogram: React.FC<OdontogramProps> = ({
                 <button 
                   onClick={handleSave}
                   disabled={isSaving}
-                  className="px-8 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition-all flex items-center gap-2 disabled:opacity-50"
+                  className="px-8 py-2.5 rounded-xl text-sm font-bold text-white bg-primary hover:opacity-90 shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 border-none"
                 >
                   {isSaving ? 'Salvando...' : (
                     <>

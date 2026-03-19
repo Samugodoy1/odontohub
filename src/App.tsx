@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, useParams, useLocation, Link, useNavigate } from 'react-router-dom';
+import { Routes, Route, useParams, useLocation, Link, useNavigate, Navigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { 
   Users, 
@@ -9,6 +9,8 @@ import {
   Plus, 
   Search, 
   ChevronRight,
+  ChevronLeft,
+  MessageCircle,
   Clock,
   CheckCircle2,
   AlertCircle,
@@ -33,12 +35,16 @@ import {
   Moon,
   Download,
   X,
-  List
+  List,
+  Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Odontogram } from './components/Odontogram';
 import { Documents } from './components/Documents';
+import { PatientClinical } from './components/PatientClinical';
 import { TermsPage, PrivacyPage } from './components/LegalPages';
+import { NovaEvolucao } from './components/NovaEvolucao';
+import { Dashboard } from './components/Dashboard';
 import { formatDate, isOverdue } from './utils/dateUtils';
 
 // Types
@@ -70,6 +76,16 @@ interface Patient {
     created_at: string;
   }>;
   odontogram?: Record<number, { status: string; notes: string }>;
+  journey?: {
+    cadastro: 'PENDENTE' | 'CONCLUIDO';
+    anamnese: 'PENDENTE' | 'CONCLUIDO';
+    odontograma: 'PENDENTE' | 'CONCLUIDO';
+    plano: 'PENDENTE' | 'CONCLUIDO';
+    aceite: 'PENDENTE' | 'CONCLUIDO';
+    consultas: 'PENDENTE' | 'CONCLUIDO';
+    evolucao: 'PENDENTE' | 'CONCLUIDO';
+    pagamento: 'PENDENTE' | 'CONCLUIDO';
+  };
   toothHistory?: Array<{
     id: number;
     tooth_number: number;
@@ -77,6 +93,30 @@ interface Patient {
     notes: string;
     date: string;
     dentist_name?: string;
+  }>;
+  treatmentPlan?: Array<{
+    id: number;
+    tooth_number?: number;
+    procedure: string;
+    value: number;
+    status: 'PLANEJADO' | 'APROVADO' | 'REALIZADO' | 'CANCELADO';
+    created_at: string;
+  }>;
+  procedures?: Array<{
+    id: number;
+    date: string;
+    tooth_number?: number;
+    procedure: string;
+    dentist_name: string;
+    notes: string;
+  }>;
+  clinicalEvolution?: Array<{
+    id: number;
+    date: string;
+    procedure: string;
+    notes: string;
+    materials?: string;
+    observations?: string;
   }>;
   financial?: {
     transactions: Transaction[];
@@ -158,7 +198,141 @@ interface Transaction {
   created_at: string;
 }
 
+const SidebarItem = ({ id, icon: Icon, label, activeTab, setActiveTab, setIsSidebarOpen, navigate }: any) => (
+  <button
+    onClick={() => {
+      setActiveTab(id);
+      setIsSidebarOpen(false);
+      navigate('/');
+    }}
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+      activeTab === id 
+        ? 'bg-primary text-white shadow-lg shadow-primary/20' 
+        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+    }`}
+  >
+    <Icon size={20} className="shrink-0" />
+    <span className="font-medium tablet-l:hidden desktop:block whitespace-nowrap">{label}</span>
+  </button>
+);
+
+const BottomNavItem = ({ id, icon: Icon, label, activeTab, setActiveTab, navigate }: any) => (
+  <button
+    onClick={() => {
+      setActiveTab(id);
+      navigate('/');
+    }}
+    className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 transition-all ${
+      activeTab === id 
+        ? 'text-primary' 
+        : 'text-[#8E8E93]'
+    }`}
+  >
+    <Icon size={24} className={activeTab === id ? 'stroke-[2.5px]' : 'stroke-[1.5px]'} />
+    <span className={`text-[10px] font-semibold ${activeTab === id ? 'opacity-100' : 'opacity-80'}`}>{label}</span>
+  </button>
+);
+
+const StatusBadge = ({ app, now }: { app: Appointment; now: Date }) => {
+  const startTime = new Date(app.start_time);
+  const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / 60000);
+  
+  let label = '';
+  let style = '';
+  let icon = null;
+
+  if (app.status === 'IN_PROGRESS') {
+    label = 'Em Atendimento';
+    style = 'bg-primary/10 text-primary border-primary/20';
+    icon = <Activity size={10} className="animate-pulse" />;
+  } else if (app.status === 'FINISHED') {
+    label = 'Finalizado';
+    style = 'bg-slate-100 text-slate-500 border-slate-200';
+  } else if (app.status === 'CANCELLED') {
+    label = 'Faltou';
+    style = 'bg-rose-50 text-rose-500 border-rose-100';
+    icon = <AlertCircle size={10} />;
+  } else if (diffInMinutes < 0 && app.status === 'SCHEDULED') {
+    label = 'Atrasado';
+    style = 'bg-rose-50 text-rose-500 border-rose-100 animate-pulse';
+    icon = <Clock size={10} />;
+  } else if (diffInMinutes >= 0 && diffInMinutes <= 15 && app.status === 'SCHEDULED') {
+    label = `Próximo em ${diffInMinutes} min`;
+    style = 'bg-amber-50 text-amber-600 border-amber-100 font-bold';
+    icon = <Clock size={10} />;
+  } else if (app.status === 'CONFIRMED') {
+    label = 'Confirmado';
+    style = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  } else {
+    label = 'Agendado';
+    style = 'bg-slate-50 text-slate-400 border-slate-100';
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${style}`}>
+      {icon}
+      {label}
+    </span>
+  );
+};
+
+const ClinicalPageRoute = ({ transactions, appointments, onUpdatePatient, onUpdateAnamnesis, onAddEvolution, onAddTransaction, dentistName, onOpenSidebar, apiFetch, setAppActiveTab, navigate }: any) => {
+  const { id } = useParams();
+  const [patient, setPatient] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadPatient = async () => {
+      // Only show loading if we don't have the patient or it's a different patient
+      if (!patient || patient.id !== Number(id)) {
+        setLoading(true);
+      }
+      try {
+        const res = await apiFetch(`/api/patients/${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setPatient(data);
+        }
+      } catch (error) {
+        console.error('Error loading patient:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (id) loadPatient();
+  }, [id, apiFetch]);
+
+  if (loading) return (
+    <div className="flex-1 flex items-center justify-center bg-slate-50">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        <p className="text-slate-500 font-medium">Carregando prontuário...</p>
+      </div>
+    </div>
+  );
+  
+  if (!patient) return <div className="p-8 text-center">Paciente não encontrado.</div>;
+  
+  return (
+    <PatientClinical 
+      patient={patient} 
+      appointments={appointments}
+      onUpdatePatient={(updated: any) => {
+        setPatient(updated);
+        onUpdatePatient(updated);
+      }} 
+      onAddEvolution={(data: any) => {
+        setPatient((prev: any) => ({ ...prev, evolution: [data, ...(prev.evolution || [])] }));
+        onAddEvolution(data);
+      }}
+      setAppActiveTab={setAppActiveTab}
+      navigate={navigate}
+    />
+  );
+};
+
 export default function App() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin'>('dashboard');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -312,6 +486,8 @@ export default function App() {
   const [agendaViewMode, setAgendaViewMode] = useState<'day' | 'week' | 'month'>('day');
   const [selectedWeekDay, setSelectedWeekDay] = useState<number>(new Date().getDay());
   const [now, setNow] = useState(new Date());
+  const [monthSheetSelectedDay, setMonthSheetSelectedDay] = useState<Date | null>(null);
+  const [weekSheetSelectedAppointment, setWeekSheetSelectedAppointment] = useState<Appointment | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -320,6 +496,7 @@ export default function App() {
 
   const [statusFilter, setStatusFilter] = useState<string[]>(['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS']);
   const [agendaSearchTerm, setAgendaSearchTerm] = useState('');
+  const [agendaFocusMode, setAgendaFocusMode] = useState(true);
   const [isEvolutionFormOpen, setIsEvolutionFormOpen] = useState(false);
   const [newEvolution, setNewEvolution] = useState({ notes: '', procedure: '' });
   const [newDentist, setNewDentist] = useState({ name: '', email: '', password: '' });
@@ -610,6 +787,16 @@ export default function App() {
         fetchData();
         if (selectedPatient) {
           fetchPatientFinancialHistory(selectedPatient.id);
+          // Update journey status
+          const updatedPatient = {
+            ...selectedPatient,
+            journey: {
+              ...(selectedPatient.journey || {}),
+              pagamento: 'CONCLUIDO'
+            }
+          };
+          setSelectedPatient(updatedPatient);
+          setPatients(prev => prev.map(p => p.id === updatedPatient.id ? updatedPatient : p));
         }
         // Automatically show receipt
         if (data.transaction) {
@@ -904,12 +1091,46 @@ export default function App() {
         })
         .reduce((acc, t) => acc + Number(t.amount), 0);
 
+  const todayIncome = transactions
+    .filter(t => t.type === 'INCOME' && t.date?.split('T')[0] === todayStr)
+    .reduce((acc, t) => acc + Number(t.amount), 0);
+    
+  const todayExpense = transactions
+    .filter(t => t.type === 'EXPENSE' && t.date?.split('T')[0] === todayStr)
+    .reduce((acc, t) => acc + Number(t.amount), 0);
+
+  const absencesToday = appointments.filter(a => 
+    new Date(a.start_time).toDateString() === dashboardNow.toDateString() && 
+    a.status === 'CANCELLED'
+  ).length;
+
+  const proceduresToday = appointments.filter(a => 
+    new Date(a.start_time).toDateString() === dashboardNow.toDateString() && 
+    (a.status === 'FINISHED' || a.status === 'IN_PROGRESS')
+  ).length;
+
   const nextAppointments = appointments
     .filter(a => new Date(a.start_time) >= dashboardNow)
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 5);
 
   const todayAppointmentsCount = appointments.filter(a => new Date(a.start_time).toDateString() === dashboardNow.toDateString()).length;
+
+  // Weekly Revenue Data for the Chart
+  const weeklyRevenueData = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dStr = d.toLocaleDateString('en-CA');
+    const amount = transactions
+      .filter(t => t.type === 'INCOME' && t.date?.split('T')[0] === dStr)
+      .reduce((acc, t) => acc + Number(t.amount), 0);
+    return {
+      day: d.toLocaleDateString('pt-BR', { weekday: 'short' }).charAt(0).toUpperCase(),
+      amount
+    };
+  });
+
+  const maxWeeklyRevenue = Math.max(...weeklyRevenueData.map(d => d.amount), 1);
 
   const apiFetch = async (url: string, options: any = {}) => {
     const token = options.explicitToken || localStorage.getItem('token');
@@ -941,25 +1162,104 @@ export default function App() {
   };
 
   const openAppointmentModal = () => {
-    if (user) {
-      setNewAppointment(prev => ({ ...prev, dentist_id: user.id.toString() }));
-    }
+    // Initialize with current user if available
+    const dentist_id = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
+    
+    setNewAppointment({
+      patient_id: '',
+      dentist_id: dentist_id || '',
+      start_time: '',
+      end_time: '',
+      notes: ''
+    });
     setIsModalOpen(true);
+  };
+
+  const formatProcedure = (input: string) => {
+    const normalized = (input || '').trim();
+    if (!normalized) return '';
+
+    const lower = normalized.toLowerCase();
+
+    // Endodontia shorthand
+    const endoMatch = lower.match(/\b(?:endo|canal)\b\s*(\d{1,2})/);
+    if (endoMatch) {
+      return `Endodontia dente ${endoMatch[1]}`;
+    }
+
+    // Restauração shorthand
+    const restaMatch = lower.match(/\b(?:restaura(?:c|ç)ao|restauração|resina)\b(?:\s+dente\s*(\d{1,2}))?/);
+    if (restaMatch) {
+      return restaMatch[1] ? `Restauração dente ${restaMatch[1]}` : 'Restauração';
+    }
+
+    // Extração shorthand
+    const exoMatch = lower.match(/\b(?:extra(?:c|ç)ao|extração|exo)\b\s*(\d{1,2})?/);
+    if (exoMatch) {
+      return exoMatch[1] ? `Extração dente ${exoMatch[1]}` : 'Extração';
+    }
+
+    // Profilaxia / limpeza
+    if (/\b(?:higiene|limpeza|profilaxia)\b/.test(lower)) {
+      return 'Profilaxia';
+    }
+
+    // Fallback: capitalize words
+    return normalized
+      .split(/\s+/)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
   };
 
   const handleCreateAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAppointment.patient_id || !newAppointment.dentist_id || !newAppointment.start_time || !newAppointment.end_time) {
-      alert('Por favor, preencha todos os campos obrigatórios.');
+
+    // Ensure dentist_id is set - fallback to user if not already set
+    const dentist_id = newAppointment.dentist_id || (user?.id ? user.id.toString() : null);
+    const savedUser = localStorage.getItem('user');
+    const fallbackDentistId = dentist_id || (savedUser ? JSON.parse(savedUser)?.id?.toString() : null);
+
+    // Debug logs
+    console.log('New appointment data:', newAppointment);
+    console.log('User:', user);
+    console.log('Dentist ID:', fallbackDentistId);
+
+    // Improved validation with better error messages
+    if (!newAppointment.patient_id || newAppointment.patient_id === '') {
+      alert('Por favor, selecione um paciente.');
       return;
     }
+    if (!fallbackDentistId) {
+      alert('Erro: Dentista não identificado. Tente recarregar a página.');
+      return;
+    }
+    if (!newAppointment.start_time || newAppointment.start_time === '') {
+      alert('Por favor, selecione a data e hora de início.');
+      return;
+    }
+    if (!newAppointment.end_time || newAppointment.end_time === '') {
+      alert('Por favor, selecione a data e hora de término.');
+      return;
+    }
+
+    // Validate that end time is after start time
+    const startTime = new Date(newAppointment.start_time);
+    const endTime = new Date(newAppointment.end_time);
+    if (endTime <= startTime) {
+      alert('A hora de término deve ser posterior à hora de início.');
+      return;
+    }
+
     try {
+      const formattedProcedure = formatProcedure(newAppointment.notes || '');
       const body = {
         ...newAppointment,
-        start_time: new Date(newAppointment.start_time).toISOString(),
-        end_time: new Date(newAppointment.end_time).toISOString()
+        notes: formattedProcedure,
+        dentist_id: fallbackDentistId,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString()
       };
-      
+
       const res = await apiFetch('/api/appointments', {
         method: 'POST',
         body: JSON.stringify(body)
@@ -968,6 +1268,7 @@ export default function App() {
       if (res.ok) {
         setIsModalOpen(false);
         fetchData();
+
         setNewAppointment({ patient_id: '', dentist_id: '', start_time: '', end_time: '', notes: '' });
         showNotification('Agendamento realizado com sucesso!');
       } else {
@@ -988,8 +1289,10 @@ export default function App() {
         body: JSON.stringify(newPatient)
       });
       if (res.ok) {
+        const data = await res.json();
         setIsPatientModalOpen(false);
         fetchData();
+        
         setNewPatient({ name: '', cpf: '', birth_date: '', phone: '', email: '', address: '' });
         showNotification('Paciente cadastrado com sucesso!');
       } else {
@@ -1069,6 +1372,13 @@ export default function App() {
     }
   };
 
+  const isNextAppointment = (app: Appointment, allApps: Appointment[]) => {
+    const futureApps = allApps
+      .filter(a => new Date(a.start_time) > now && a.status !== 'CANCELLED' && a.status !== 'FINISHED')
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+    return futureApps.length > 0 && futureApps[0].id === app.id;
+  };
+
   const updateStatus = async (id: number, status: Appointment['status']) => {
     try {
       const res = await apiFetch(`/api/appointments/${id}/status`, {
@@ -1114,18 +1424,34 @@ export default function App() {
     }
   };
 
+  const handleUpdateAnamnesis = async (patientId: number, anamnesisData: any) => {
+    try {
+      const res = await apiFetch(`/api/patients/${patientId}/anamnesis`, {
+        method: 'PUT',
+        body: JSON.stringify(anamnesisData)
+      });
+      if (res.ok) {
+        setPatients(prev => prev.map(p => {
+          if (p.id === patientId) {
+            return { ...p, anamnesis: anamnesisData };
+          }
+          return p;
+        }));
+        showNotification('Anamnese salva com sucesso!');
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'Erro ao salvar anamnese', 'error');
+      }
+    } catch (error) {
+      console.error('Error saving anamnesis:', error);
+      showNotification('Erro de conexão ao salvar anamnese', 'error');
+    }
+  };
+
   const saveAnamnesis = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPatient) return;
-    try {
-      const res = await apiFetch(`/api/patients/${selectedPatient.id}/anamnesis`, {
-        method: 'PUT',
-        body: JSON.stringify(selectedPatient.anamnesis)
-      });
-      if (res.ok) alert('Anamnese salva com sucesso!');
-    } catch (error) {
-      console.error('Error saving anamnesis:', error);
-    }
+    await handleUpdateAnamnesis(selectedPatient.id, selectedPatient.anamnesis);
   };
 
   const saveOdontogram = async (toothNumber: number, toothData: any) => {
@@ -1165,16 +1491,28 @@ export default function App() {
     }
   };
 
-  const addEvolution = async (notes: string, procedure: string) => {
+  const addEvolution = async (evolutionData: any) => {
     if (!selectedPatient || !user) return;
     try {
       const res = await apiFetch(`/api/patients/${selectedPatient.id}/evolution`, {
         method: 'POST',
-        body: JSON.stringify({ notes, procedure_performed: procedure })
+        body: JSON.stringify({ 
+          notes: evolutionData.notes, 
+          procedure_performed: evolutionData.procedure,
+          materials: evolutionData.materials,
+          observations: evolutionData.observations
+        })
       });
-      if (res.ok) openPatientRecord(selectedPatient.id);
+      if (res.ok) {
+        openPatientRecord(selectedPatient.id);
+        showNotification('Evolução clínica registrada!');
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'Erro ao registrar evolução', 'error');
+      }
     } catch (error) {
       console.error('Error adding evolution:', error);
+      showNotification('Erro de conexão ao registrar evolução', 'error');
     }
   };
 
@@ -1185,9 +1523,8 @@ export default function App() {
     }
 
     // Formata a mensagem de WhatsApp conforme solicitado
-    const date = new Date(app.start_time).toLocaleDateString('pt-BR');
     const time = new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const message = `Olá ${app.patient_name}, este é um lembrete da sua consulta dia ${date} às ${time} com ${app.dentist_name}.`;
+    const message = `Olá ${app.patient_name}, você confirma sua consulta hoje às ${time}?`;
     
     // Limpa o número de telefone (apenas números)
     let phone = app.patient_phone.replace(/\D/g, '');
@@ -1251,49 +1588,110 @@ export default function App() {
     });
   };
 
-  const SidebarItem = ({ id, icon: Icon, label }: { id: typeof activeTab, icon: any, label: string }) => (
-    <button
-      onClick={() => {
-        setActiveTab(id);
-        setIsSidebarOpen(false);
-      }}
-      className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${
-        activeTab === id 
-          ? 'bg-slate-100 text-emerald-600' 
-          : 'text-slate-600 hover:bg-slate-50'
-      }`}
-    >
-      <Icon size={20} className="shrink-0" />
-      <span className="font-medium tablet-l:hidden desktop:block whitespace-nowrap">{label}</span>
-    </button>
-  );
+  const handleUpdatePatient = async (updatedPatient: Patient) => {
+    try {
+      const res = await apiFetch(`/api/patients/${updatedPatient.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updatedPatient)
+      });
+      if (res.ok) {
+        setPatients(prev => prev.map(p => p.id === updatedPatient.id ? updatedPatient : p));
+        showNotification('Dados do paciente atualizados!');
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'Erro ao atualizar paciente', 'error');
+      }
+    } catch (error) {
+      console.error('Error updating patient:', error);
+      showNotification('Erro de conexão ao atualizar paciente', 'error');
+    }
+  };
 
-  const StatusBadge = ({ status }: { status: Appointment['status'] }) => {
-    const styles = {
-      SCHEDULED: 'bg-blue-100 text-blue-700',
-      CONFIRMED: 'bg-emerald-100 text-emerald-700',
-      CANCELLED: 'bg-rose-100 text-rose-700',
-      IN_PROGRESS: 'bg-amber-100 text-amber-700',
-      FINISHED: 'bg-slate-100 text-slate-700',
+  const handleAddTransaction = async (transaction: any) => {
+    const newTransaction = {
+      ...transaction,
+      id: Date.now(),
+      created_at: new Date().toISOString()
     };
-    const labels = {
-      SCHEDULED: 'Agendado',
-      CONFIRMED: 'Confirmado',
-      CANCELLED: 'Cancelado',
-      IN_PROGRESS: 'Em Atendimento',
-      FINISHED: 'Finalizado',
-    };
-    return (
-      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
-        {labels[status]}
-      </span>
-    );
+    setTransactions(prev => [newTransaction, ...prev]);
+    
+    // Update journey status if it's for the selected patient
+    if (selectedPatient && transaction.patient_id === selectedPatient.id) {
+      const updatedPatient = {
+        ...selectedPatient,
+        journey: {
+          ...(selectedPatient.journey || {}),
+          pagamento: 'CONCLUIDO'
+        }
+      };
+      setSelectedPatient(updatedPatient);
+      setPatients(prev => prev.map(p => p.id === updatedPatient.id ? updatedPatient : p));
+    }
   };
 
   return (
     <Routes>
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/pacientes/:id/clinico" element={
+        user ? (
+          <div className="min-h-screen bg-[#F8FAFC] flex font-sans text-slate-900 relative overflow-x-hidden">
+            {/* Mobile Sidebar Overlay */}
+            <AnimatePresence>
+              {isSidebarOpen && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] tablet-l:hidden"
+                />
+              )}
+            </AnimatePresence>
+
+            <aside className={`
+              fixed inset-y-0 left-0 z-[110] bg-white border-r border-slate-200 p-4 md:p-6 flex flex-col transition-all duration-300 ease-in-out tablet-l:static tablet-l:translate-x-0 no-print
+              ${isSidebarOpen ? 'translate-x-0 w-72' : '-translate-x-full w-72 tablet-l:w-20 desktop:w-72'}
+            `}>
+              <div className="flex items-center justify-between mb-10 px-2">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary/20 shrink-0">
+                    <Plus size={24} strokeWidth={3} />
+                  </div>
+                  <h1 className="text-xl font-bold tracking-tight text-slate-800 whitespace-nowrap tablet-l:hidden desktop:block">OdontoHub</h1>
+                </div>
+                <button onClick={() => setIsSidebarOpen(false)} className="tablet-l:hidden text-slate-400">
+                  <Plus size={24} className="rotate-45" />
+                </button>
+              </div>
+              <nav className="space-y-2 flex-1">
+                <SidebarItem id="dashboard" icon={ClipboardList} label="Dashboard" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="agenda" icon={Calendar} label="Agenda" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="configuracoes" icon={Settings} label="Configurações" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+              </nav>
+            </aside>
+            <main className="flex-1 min-w-0 overflow-hidden flex flex-col">
+              <ClinicalPageRoute 
+                transactions={transactions}
+                appointments={appointments}
+                onUpdatePatient={handleUpdatePatient}
+                onUpdateAnamnesis={handleUpdateAnamnesis}
+                onAddEvolution={addEvolution}
+                onAddTransaction={handleAddTransaction}
+                dentistName={profile?.name || ''}
+                onOpenSidebar={() => setIsSidebarOpen(true)}
+                apiFetch={apiFetch}
+                setAppActiveTab={setActiveTab}
+                navigate={navigate}
+              />
+            </main>
+          </div>
+        ) : <Navigate to="/" />
+      } />
+      <Route path="/nova-evolucao" element={<NovaEvolucao />} />
       <Route path="/termos" element={<TermsPage />} />
       <Route path="/privacidade" element={<PrivacyPage />} />
       <Route path="/print/:tipo/:id?" element={
@@ -1317,7 +1715,7 @@ export default function App() {
             >
               <div className="p-8 md:p-12">
                 <div className="flex justify-center mb-8">
-                  <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-emerald-200">
+                  <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary/10">
                     <Plus size={32} strokeWidth={3} />
                   </div>
                 </div>
@@ -1338,7 +1736,7 @@ export default function App() {
                           placeholder="Dr. João Silva"
                           value={registerData.name}
                           onChange={(e) => setRegisterData({...registerData, name: e.target.value})}
-                          className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                          className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                       </div>
                     </div>
@@ -1356,7 +1754,7 @@ export default function App() {
                           ? setRegisterData({...registerData, email: e.target.value})
                           : setLoginData({...loginData, email: e.target.value})
                         }
-                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                       />
                     </div>
                   </div>
@@ -1373,7 +1771,7 @@ export default function App() {
                           ? setRegisterData({...registerData, password: e.target.value})
                           : setLoginData({...loginData, password: e.target.value})
                         }
-                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                       />
                     </div>
                   </div>
@@ -1386,13 +1784,13 @@ export default function App() {
                           type="checkbox" 
                           checked={loginData.rememberMe}
                           onChange={(e) => setLoginData({...loginData, rememberMe: e.target.checked})}
-                          className="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
+                          className="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
                         />
                         <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-600 font-medium cursor-pointer">
                           Lembrar de mim
                         </label>
                       </div>
-                      <Link to="/forgot-password" title="Recuperar senha" className="text-sm text-emerald-600 font-bold hover:underline">
+                      <Link to="/forgot-password" title="Recuperar senha" className="text-sm text-primary font-bold hover:underline">
                         Esqueci minha senha
                       </Link>
                     </div>
@@ -1406,7 +1804,7 @@ export default function App() {
                   )}
 
                   {registerMessage && (
-                    <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-600 text-sm">
+                    <div className="p-4 bg-primary/10 border border-primary/20 rounded-2xl flex items-center gap-3 text-primary text-sm">
                       <CheckCircle2 size={18} />
                       {registerMessage}
                     </div>
@@ -1425,10 +1823,10 @@ export default function App() {
                             acceptedTerms: e.target.checked,
                             acceptedPrivacyPolicy: e.target.checked
                           })}
-                          className="mt-1 w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
+                          className="mt-1 w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
                         />
                         <label htmlFor="accepted-terms" className="text-sm text-slate-600 leading-tight">
-                          Li e concordo com os <Link to="/termos" target="_blank" className="text-emerald-600 font-bold hover:underline">Termos de Uso</Link> e a <Link to="/privacidade" target="_blank" className="text-emerald-600 font-bold hover:underline">Política de Privacidade</Link>.
+                          Li e concordo com os <Link to="/termos" target="_blank" className="text-primary font-bold hover:underline">Termos de Uso</Link> e a <Link to="/privacidade" target="_blank" className="text-primary font-bold hover:underline">Política de Privacidade</Link>.
                         </label>
                       </div>
 
@@ -1439,7 +1837,7 @@ export default function App() {
                           required
                           checked={registerData.acceptedResponsibility}
                           onChange={(e) => setRegisterData({...registerData, acceptedResponsibility: e.target.checked})}
-                          className="mt-1 w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
+                          className="mt-1 w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
                         />
                         <label htmlFor="accepted-responsibility" className="text-sm text-slate-600 leading-tight">
                           Declaro que sou responsável legal pelos dados dos pacientes cadastrados na plataforma.
@@ -1450,7 +1848,7 @@ export default function App() {
 
                   <button 
                     type="submit"
-                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98]"
+                    className="w-full bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-[0.98]"
                   >
                     {isRegistering ? 'Criar Conta' : 'Entrar no Sistema'}
                   </button>
@@ -1463,7 +1861,7 @@ export default function App() {
                       setLoginError('');
                       setRegisterMessage('');
                     }}
-                    className="text-xs text-emerald-600 font-bold hover:underline"
+                    className="text-xs text-primary font-bold hover:underline"
                   >
                     {isRegistering ? 'Já tem uma conta? Faça login' : 'Não tem uma conta? Cadastre-se'}
                   </button>
@@ -1471,9 +1869,9 @@ export default function App() {
                   <div className="pt-8 border-t border-slate-100">
                     <p className="text-xs text-slate-400 mb-2">© 2026 OdontoHub</p>
                     <div className="flex justify-center gap-4 text-xs font-bold text-slate-500">
-                      <Link to="/termos" className="hover:text-emerald-600 transition-colors">Termos de Uso</Link>
+                      <Link to="/termos" className="hover:text-primary transition-colors">Termos de Uso</Link>
                       <span>|</span>
-                      <Link to="/privacidade" className="hover:text-emerald-600 transition-colors">Política de Privacidade</Link>
+                      <Link to="/privacidade" className="hover:text-primary transition-colors">Política de Privacidade</Link>
                     </div>
                   </div>
                 </div>
@@ -1490,19 +1888,19 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 tablet-l:hidden"
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] tablet-l:hidden"
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-50 bg-white border-r border-slate-200 p-4 md:p-6 flex flex-col transition-all duration-300 ease-in-out tablet-l:static tablet-l:translate-x-0 no-print
+        fixed inset-y-0 left-0 z-[110] bg-white border-r border-slate-200 p-4 md:p-6 flex flex-col transition-all duration-300 ease-in-out tablet-l:static tablet-l:translate-x-0 no-print
         ${isSidebarOpen ? 'translate-x-0 w-72' : '-translate-x-full w-72 tablet-l:w-20 desktop:w-72'}
       `}>
         <div className="flex items-center justify-between mb-10 px-2">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shrink-0">
+            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white shadow-md shadow-primary/10 shrink-0">
               <Plus size={24} strokeWidth={3} />
             </div>
             <h1 className="text-xl font-bold tracking-tight text-slate-800 whitespace-nowrap tablet-l:hidden desktop:block">OdontoHub</h1>
@@ -1513,15 +1911,15 @@ export default function App() {
         </div>
 
         <nav className="space-y-2 flex-1">
-          <SidebarItem id="dashboard" icon={ClipboardList} label="Dashboard" />
-          <SidebarItem id="agenda" icon={Calendar} label="Agenda" />
-          <SidebarItem id="pacientes" icon={Users} label="Pacientes" />
-          <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" />
-          <SidebarItem id="documentos" icon={FileText} label="Documentos" />
+          <SidebarItem id="dashboard" icon={ClipboardList} label="Dashboard" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="agenda" icon={Calendar} label="Agenda" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           {user?.role?.toUpperCase() === 'ADMIN' && (
-            <SidebarItem id="admin" icon={UserCog} label="Gestão de Dentistas" />
+            <SidebarItem id="admin" icon={UserCog} label="Gestão de Dentistas" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           )}
-          <SidebarItem id="configuracoes" icon={Settings} label="Configurações" />
+          <SidebarItem id="configuracoes" icon={Settings} label="Configurações" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
         </nav>
 
         <div className="pt-6 border-t border-slate-100">
@@ -1554,72 +1952,15 @@ export default function App() {
           <div className="mt-6 pt-6 border-t border-slate-50 tablet-l:hidden desktop:block">
             <p className="text-[10px] text-slate-400 px-4 mb-2">© 2026 OdontoHub</p>
             <div className="flex flex-col gap-1 px-4 text-[10px] font-bold text-slate-500">
-              <Link to="/termos" className="hover:text-emerald-600 transition-colors">Termos de Uso</Link>
-              <Link to="/privacidade" className="hover:text-emerald-600 transition-colors">Política de Privacidade</Link>
+              <Link to="/termos" className="hover:text-primary transition-colors">Termos de Uso</Link>
+              <Link to="/privacidade" className="hover:text-primary transition-colors">Política de Privacidade</Link>
             </div>
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 pb-20 md:pb-8 overflow-y-auto w-full max-w-full print:p-0 print:pb-0">
-        <header className="w-full max-w-screen-xl mx-auto px-0 md:px-4 flex flex-col desktop:flex-row desktop:justify-between desktop:items-center gap-6 mb-8 md:mb-10 no-print">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={() => setIsSidebarOpen(true)}
-                className="tablet-l:hidden p-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 shadow-sm active:scale-95 transition-transform"
-              >
-                <Menu size={20} />
-              </button>
-              <div>
-                <h2 className="text-xl md:text-3xl font-bold text-slate-900 tracking-tight">
-                  {activeTab === 'dashboard' && 'Bem-vindo, Dr.'}
-                  {activeTab === 'agenda' && 'Agenda Clínica'}
-                  {activeTab === 'pacientes' && 'Gestão de Pacientes'}
-                  {activeTab === 'financeiro' && 'Controle Financeiro'}
-                  {activeTab === 'admin' && 'Gestão de Dentistas'}
-                  {activeTab === 'documentos' && 'Documentos'}
-                  {activeTab === 'configuracoes' && 'Configurações'}
-                </h2>
-                <p className="text-slate-500 text-[10px] md:text-sm mt-0.5 md:mt-1 font-medium">
-                  {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-3 md:gap-4 w-full desktop:w-auto">
-            <div className="hidden sm:flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm">
-              <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center font-bold">
-                {user?.name?.charAt(0)}
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-slate-400 uppercase leading-none mb-0.5">Profissional:</span>
-                <span className="text-sm font-bold text-slate-700">{user?.name}</span>
-              </div>
-            </div>
-            
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Buscar paciente..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl lg:w-64 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
-              />
-            </div>
-            <button 
-              onClick={() => setIsPatientModalOpen(true)}
-              className="flex bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-semibold items-center justify-center gap-2 hover:bg-emerald-700 transition-all active:scale-95 w-full sm:w-auto"
-            >
-              <Plus size={20} />
-              Novo Paciente
-            </button>
-          </div>
-        </header>
-
+      <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full max-w-full print:p-0 pb-24 md:pb-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab + (searchTerm ? '-search' : '')}
@@ -1649,7 +1990,7 @@ export default function App() {
                         className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-slate-100 cursor-pointer"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden border border-emerald-200">
+                          <div className="w-8 h-8 bg-primary/10 text-primary rounded-full flex items-center justify-center text-xs font-bold overflow-hidden border border-primary/20">
                             {p.photo_url ? (
                               <img src={p.photo_url} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
@@ -1662,7 +2003,7 @@ export default function App() {
                           </div>
                         </div>
                         <button 
-                          className="text-xs font-bold text-emerald-600 hover:underline"
+                          className="text-xs font-bold text-primary hover:underline"
                         >
                           Ver Prontuário
                         </button>
@@ -1674,7 +2015,7 @@ export default function App() {
                   {patients.filter(p => (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase())).length > 5 && (
                     <button 
                       onClick={() => setActiveTab('pacientes')}
-                      className="w-full text-center py-2 text-xs font-bold text-slate-400 hover:text-emerald-600 transition-colors"
+                      className="w-full text-center py-2 text-xs font-bold text-slate-400 hover:text-primary transition-colors"
                     >
                       Ver todos os resultados
                     </button>
@@ -1684,702 +2025,902 @@ export default function App() {
             )}
 
             {activeTab === 'dashboard' && !searchTerm && (
-              <div className="max-w-3xl mx-auto">
-                {/* Próximas Consultas - Clean List Style */}
-                <div className="bg-white">
-                  <div className="px-6 py-4 border-b border-slate-200">
-                    <h2 className="text-lg font-semibold text-slate-900">Próximas Consultas</h2>
-                  </div>
-
-                  {nextAppointments.length > 0 ? (
-                    <div>
-                      {nextAppointments.map((app, idx) => {
-                        const appDate = new Date(app.start_time);
-                        const today = new Date();
-                        const tomorrow = new Date(today);
-                        tomorrow.setDate(today.getDate() + 1);
-                        const isToday = appDate.toDateString() === today.toDateString();
-                        const isTomorrow = appDate.toDateString() === tomorrow.toDateString();
-                        
-                        return (
-                        <div 
-                          key={app.id} 
-                          className="px-6 py-5 flex items-center justify-between border-b border-slate-200 last:border-b-0"
-                        >
-                          {/* Patient Info */}
-                          <div className="flex items-center gap-4 flex-1">
-                            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600 font-medium">
-                              {idx + 1}
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="font-semibold text-slate-900 text-base">{app.patient_name}</p>
-                                {isToday && (
-                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-xs font-medium rounded">
-                                    Hoje
-                                  </span>
-                                )}
-                                {isTomorrow && (
-                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-xs font-medium rounded">
-                                    Amanhã
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Clock size={14} className="text-slate-400" />
-                                <p className="text-sm text-slate-600">
-                                  {appDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                                </p>
-                                <span className="text-slate-300">•</span>
-                                <p className="text-sm text-slate-600">
-                                  {appDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Action Button */}
-                          <button 
-                            onClick={() => {
-                              setSelectedPatient(appointments.find(a => a.id === app.id) as any);
-                            }}
-                            className="px-3 py-2 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 transition-colors text-sm"
-                          >
-                            Atender
-                          </button>
-                        </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="px-6 py-16 text-center">
-                      <Calendar className="mx-auto text-slate-300 mb-4" size={40} />
-                      <p className="text-slate-500 text-base">Nenhuma consulta agendada</p>
-                      <button
-                        onClick={() => setActiveTab('agenda')}
-                        className="mt-4 text-emerald-600 font-medium hover:text-emerald-700 transition-colors"
-                      >
-                        Agendar consulta
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Metrics Cards - Secondary */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
-                  {/* Consultas Hoje */}
-                  <button 
-                    onClick={() => {
-                      setActiveTab('agenda');
-                      setAgendaViewMode('day');
-                      setSelectedDate(new Date());
-                    }}
-                    className="bg-white p-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors cursor-pointer text-left"
-                  >
-                    <p className="text-xs text-slate-500 font-medium mb-1">Consultas Hoje</p>
-                    <div className="flex items-center justify-between">
-                      <p className="text-lg font-semibold text-slate-900">
-                        {appointments.filter(a => new Date(a.start_time).toDateString() === new Date().toDateString()).length}
-                      </p>
-                      <Calendar size={16} className="text-slate-400" />
-                    </div>
-                  </button>
-
-                  {/* Faturamento Hoje */}
-                  <button 
-                    onClick={() => {
-                      setActiveTab('financeiro');
-                      setFinanceSubTab('transacoes');
-                      setFinanceFilter(prev => ({ ...prev, period: 'day', type: 'INCOME' }));
-                    }}
-                    className="bg-white p-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors cursor-pointer text-left"
-                  >
-                    <p className="text-xs text-slate-500 font-medium mb-1">Faturamento Hoje</p>
-                    <div className="flex items-center justify-between">
-                      <p className="text-lg font-semibold text-slate-900">
-                        {dailyRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </p>
-                      <DollarSign size={16} className="text-slate-400" />
-                    </div>
-                  </button>
-                </div>
-
-                {/* Reminder Section */}
-                <div className="mt-6 bg-white border border-emerald-200 rounded-xl">
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center">
-                        <CheckCircle2 size={12} className="text-emerald-600" />
-                      </div>
-                      <h3 className="text-sm font-semibold text-slate-900">Lembrete</h3>
-                    </div>
-                    <p className="text-sm text-slate-600">Verifique se todos os pacientes confirmaram suas consultas para hoje.</p>
-                  </div>
-                </div>
-              </div>
+              <Dashboard 
+                user={user}
+                patients={patients}
+                nextAppointments={nextAppointments}
+                todayAppointmentsCount={todayAppointmentsCount}
+                todayRevenue={dailyRevenue}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                openPatientRecord={openPatientRecord}
+                setIsModalOpen={setIsModalOpen}
+                setActiveTab={setActiveTab}
+              />
             )}
 
             {activeTab === 'agenda' && (
-              <div className="flex flex-col desktop:grid desktop:grid-cols-4 gap-6 md:gap-8">
-                {/* Mini Calendar / Filters */}
-                <div className="space-y-6 order-1 desktop:order-1 no-print">
-                  <div className="bg-white p-6 border-b border-slate-200">
-                    <h3 className="font-semibold mb-4 text-slate-900">Filtros da Agenda</h3>
-                    <div className="space-y-4 tablet-p:grid tablet-p:grid-cols-3 tablet-p:gap-6 tablet-p:space-y-0 desktop:flex desktop:flex-col desktop:space-y-4">
-                      <div>
-                        <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Buscar Paciente</label>
-                        <div className="relative">
-                          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                          <input 
-                            type="text" 
-                            placeholder="Nome do paciente..."
-                            value={agendaSearchTerm}
-                            onChange={(e) => setAgendaSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Data</label>
-                        <input 
-                          type="date" 
-                          value={selectedDate.toLocaleDateString('en-CA')}
-                          onChange={(e) => {
-                            const [year, month, day] = e.target.value.split('-').map(Number);
-                            setSelectedDate(new Date(year, month - 1, day));
-                          }}
-                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                        />
-                      </div>
-                      <div className="tablet-p:pt-6 desktop:pt-4 desktop:border-t desktop:border-slate-50 space-y-3">
-                        <button 
-                          onClick={openAppointmentModal}
-                          className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
-                        >
-                          <Plus size={18} />
-                          Novo Agendamento
-                        </button>
-                      </div>
+              <div className="flex flex-col gap-14 pb-32 pt-10 px-2 max-w-screen-xl mx-auto w-full">
+                {/* Clean Header */}
+                <div className="flex flex-col gap-4 mb-6 no-print">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Agenda</h2>
+                      <span className="text-sm font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+                        {selectedDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                      </span>
                     </div>
+                    <button 
+                      onClick={() => setIsModalOpen(true)}
+                      className="bg-primary text-white px-6 py-3 rounded-full font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-all shadow-lg shadow-primary/10 active:scale-95 text-sm"
+                    >
+                      <Plus size={18} strokeWidth={3} />
+                      Nova Consulta
+                    </button>
                   </div>
 
-                  <div className="bg-white p-6">
-                    <h3 className="font-semibold mb-4 text-slate-900">Status</h3>
-                    <div className="space-y-2 tablet-p:grid tablet-p:grid-cols-3 tablet-p:gap-4 tablet-p:space-y-0 desktop:flex desktop:flex-col desktop:space-y-2">
-                      {[
-                        { id: 'SCHEDULED', label: 'Agendado', color: 'bg-blue-400' },
-                        { id: 'CONFIRMED', label: 'Confirmado', color: 'bg-emerald-400' },
-                        { id: 'CANCELLED', label: 'Cancelado', color: 'bg-rose-400' },
-                        { id: 'IN_PROGRESS', label: 'Em Atendimento', color: 'bg-amber-400' },
-                        { id: 'FINISHED', label: 'Finalizado', color: 'bg-slate-400' }
-                      ].map((s) => (
-                        <label key={s.id} className="flex items-center gap-3 text-sm text-slate-600 cursor-pointer hover:bg-slate-50 p-1 rounded transition-colors">
-                          <input 
-                            type="checkbox" 
-                            checked={statusFilter.includes(s.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setStatusFilter([...statusFilter, s.id]);
-                              } else {
-                                setStatusFilter(statusFilter.filter(f => f !== s.id));
-                              }
-                            }}
-                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                          />
-                          <div className={`w-2 h-2 rounded-full ${s.color}`} />
-                          {s.label}
-                        </label>
-                      ))}
+                  {/* Focus Mode Toggle and View Controls */}
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="flex bg-slate-100 p-1 rounded-full">
+                      <button 
+                        onClick={() => setAgendaFocusMode(true)}
+                        className={`px-6 py-2 text-[13px] font-bold rounded-full transition-all flex items-center gap-2 ${agendaFocusMode ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        <Activity size={16} />
+                        Modo Foco
+                      </button>
+                      <button 
+                        onClick={() => setAgendaFocusMode(false)}
+                        className={`px-6 py-2 text-[13px] font-bold rounded-full transition-all flex items-center gap-2 ${!agendaFocusMode ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        <List size={16} />
+                        Agenda Completa
+                      </button>
                     </div>
-                  </div>
-                </div>
 
-                {/* Timeline View */}
-                <div className="desktop:col-span-3 space-y-4 order-2 desktop:order-2">
-                  <div className="bg-white border-b border-slate-200 overflow-hidden no-print">
-                    <div className="p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div className="flex flex-wrap items-center gap-3 md:gap-4">
-                        <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => setSelectedDate(new Date())}
-                            className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all active:scale-95"
-                          >
-                            Hoje
-                          </button>
-                          <button 
-                            onClick={() => imprimirDocumento('agenda')}
-                            className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all no-print"
-                            title="Imprimir agenda do dia"
-                          >
-                            <Printer size={18} />
-                            <span className="hidden xs:inline">Imprimir</span>
-                          </button>
-                          <div className="flex items-center gap-1">
-                            <button 
-                              onClick={() => {
-                                const newDate = new Date(selectedDate);
-                                if (agendaViewMode === 'day') newDate.setDate(selectedDate.getDate() - 1);
-                                else if (agendaViewMode === 'week') newDate.setDate(selectedDate.getDate() - 7);
-                                else if (agendaViewMode === 'month') newDate.setMonth(selectedDate.getMonth() - 1);
-                                setSelectedDate(newDate);
-                              }}
-                              className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-600"
-                              title="Anterior"
-                            >
-                              <ChevronRight size={20} className="rotate-180" />
-                            </button>
-                            <button 
-                              onClick={() => {
-                                const newDate = new Date(selectedDate);
-                                if (agendaViewMode === 'day') newDate.setDate(selectedDate.getDate() + 1);
-                                else if (agendaViewMode === 'week') newDate.setDate(selectedDate.getDate() + 7);
-                                else if (agendaViewMode === 'month') newDate.setMonth(selectedDate.getMonth() + 1);
-                                setSelectedDate(newDate);
-                              }}
-                              className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-600"
-                              title="Próximo"
-                            >
-                              <ChevronRight size={20} />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-bold text-lg md:text-xl text-slate-800">
-                            {(() => {
-                              const today = new Date();
-                              const isToday = selectedDate.toDateString() === today.toDateString();
-                              if (agendaViewMode === 'day') {
-                                return isToday ? 'Horários de Hoje' : `Horários de ${selectedDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
-                              }
-                              return agendaViewMode === 'week' ? 'Horários da Semana' : 'Horários do Mês';
-                            })()}
-                          </h3>
-                          <p className="text-xs font-medium text-slate-500">
-                            {agendaViewMode === 'day' ? selectedDate.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }) : 
-                             agendaViewMode === 'week' ? `Semana de ${(() => {
-                               const d = new Date(selectedDate);
-                               const day = d.getDay();
-                               const diff = (day === 0 ? 7 : day) - 1;
-                               d.setDate(d.getDate() - diff);
-                               return d;
-                             })().toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}` : 
-                             selectedDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-                          </p>
-                        </div>
-                        <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold">
-                          {appointments.filter(a => {
-                            const appDate = new Date(a.start_time);
-                            if (agendaViewMode === 'day') return appDate.toDateString() === selectedDate.toDateString();
-                            if (agendaViewMode === 'week') {
-                              const day = selectedDate.getDay();
-                              const diff = (day === 0 ? 7 : day) - 1;
-                              const startOfWeek = new Date(selectedDate);
-                              startOfWeek.setDate(selectedDate.getDate() - diff);
-                              startOfWeek.setHours(0, 0, 0, 0);
-                              const endOfWeek = new Date(startOfWeek);
-                              endOfWeek.setDate(startOfWeek.getDate() + 6);
-                              endOfWeek.setHours(23, 59, 59, 999);
-                              const appDateTime = appDate.getTime();
-                              return appDateTime >= startOfWeek.getTime() && appDateTime <= endOfWeek.getTime();
-                            }
-                            if (agendaViewMode === 'month') return appDate.getMonth() === selectedDate.getMonth() && appDate.getFullYear() === selectedDate.getFullYear();
-                            return false;
-                          }).length} Consultas
-                        </span>
-                      </div>
-                      <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto">
+                    {!agendaFocusMode && (
+                      <div className="flex bg-slate-100 p-1 rounded-full">
                         <button 
                           onClick={() => setAgendaViewMode('day')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'day' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-2 text-[12px] font-bold rounded-full transition-all ${agendaViewMode === 'day' ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                           Dia
                         </button>
                         <button 
                           onClick={() => setAgendaViewMode('week')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'week' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-2 text-[12px] font-bold rounded-full transition-all ${agendaViewMode === 'week' ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                           Semana
                         </button>
                         <button 
                           onClick={() => setAgendaViewMode('month')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'month' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-2 text-[12px] font-bold rounded-full transition-all ${agendaViewMode === 'month' ? 'bg-white shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                           Mês
                         </button>
                       </div>
-                    </div>
-
-                    {agendaViewMode === 'week' && (
-                      <div className="px-4 tablet-l:px-8 py-3 bg-slate-50 border-b border-slate-100 overflow-x-auto no-scrollbar">
-                        <div className="flex gap-2 min-w-max tablet-l:min-w-0 tablet-l:justify-between">
-                          {[
-                            { label: 'SEG', value: 1 },
-                            { label: 'TER', value: 2 },
-                            { label: 'QUA', value: 3 },
-                            { label: 'QUI', value: 4 },
-                            { label: 'SEX', value: 5 },
-                            { label: 'SÁB', value: 6 },
-                            { label: 'DOM', value: 0 },
-                          ].map((day) => {
-                            const dayOfWeek = selectedDate.getDay();
-                            const diffToMon = (dayOfWeek === 0 ? 7 : dayOfWeek) - 1;
-                            const startOfMonday = new Date(selectedDate);
-                            startOfMonday.setDate(selectedDate.getDate() - diffToMon);
-                            const dayDate = new Date(startOfMonday);
-                            const offset = (day.value === 0 ? 7 : day.value) - 1;
-                            dayDate.setDate(startOfMonday.getDate() + offset);
-                            const dayOfMonth = dayDate.getDate();
-
-                            const count = appointments.filter(a => {
-                              const appDate = new Date(a.start_time);
-                              const endOfWeek = new Date(startOfMonday);
-                              endOfWeek.setDate(startOfMonday.getDate() + 6);
-                              const appDateTime = appDate.getTime();
-                              const isInWeek = appDateTime >= startOfMonday.setHours(0,0,0,0) && appDateTime <= endOfWeek.setHours(23,59,59,999);
-                              return isInWeek && appDate.getDay() === day.value && (statusFilter.length === 0 || statusFilter.includes(a.status));
-                            }).length;
-
-                            return (
-                              <button
-                                key={day.value}
-                                onClick={() => setSelectedWeekDay(day.value)}
-                                className={`flex flex-col items-center justify-center min-w-[60px] tablet-l:min-w-0 tablet-l:flex-1 py-2 px-2 rounded-xl transition-all ${
-                                  selectedWeekDay === day.value
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-100'
-                                }`}
-                              >
-                                <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{day.label}</span>
-                                <span className="text-base font-black leading-tight">{dayOfMonth}</span>
-                                <span className={`text-[9px] font-bold mt-0.5 ${selectedWeekDay === day.value ? 'text-emerald-100' : 'text-slate-400'}`}>
-                                  ({count})
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
                     )}
+                  </div>
+                </div>
 
-                    {agendaViewMode === 'month' && (
-                      <div className="px-4 tablet-l:px-8 py-6 bg-slate-50 border-b border-slate-100">
-                        <div className="max-w-md mx-auto">
-                          <div className="grid grid-cols-7 gap-1 mb-2">
-                            {['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'].map(day => (
-                              <div key={day} className="text-center text-[10px] font-bold text-slate-400 py-2 uppercase tracking-widest">
-                                {day}
-                              </div>
-                            ))}
-                          </div>
-                          <div className="grid grid-cols-7 gap-1">
-                            {(() => {
-                              const year = selectedDate.getFullYear();
-                              const month = selectedDate.getMonth();
-                              const firstDayOfMonth = new Date(year, month, 1);
-                              const lastDayOfMonth = new Date(year, month + 1, 0);
-                              
-                              let firstDayIdx = firstDayOfMonth.getDay();
-                              firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1;
-                              
-                              const days = [];
-                              const prevMonthLastDay = new Date(year, month, 0).getDate();
-                              for (let i = firstDayIdx - 1; i >= 0; i--) {
-                                days.push({ day: prevMonthLastDay - i, month: month - 1, currentMonth: false });
-                              }
-                              for (let i = 1; i <= lastDayOfMonth.getDate(); i++) {
-                                days.push({ day: i, month: month, currentMonth: true });
-                              }
-                              const remainingSlots = 42 - days.length;
-                              for (let i = 1; i <= remainingSlots; i++) {
-                                days.push({ day: i, month: month + 1, currentMonth: false });
-                              }
-                              
-                              return days.map((d, idx) => {
-                                const date = new Date(year, d.month, d.day);
-                                const dateStr = date.toDateString();
-                                const isSelected = dateStr === selectedDate.toDateString();
-                                const isToday = dateStr === new Date().toDateString();
-                                
-                                const dayAppointments = appointments.filter(a => 
-                                  new Date(a.start_time).toDateString() === dateStr &&
-                                  (statusFilter.length === 0 || statusFilter.includes(a.status))
-                                );
-                                
-                                const dotsCount = Math.min(dayAppointments.length, 3);
-                                
-                                return (
-                                  <button
-                                    key={idx}
-                                    onClick={() => setSelectedDate(date)}
-                                    className={`relative flex flex-col items-center justify-center aspect-square rounded-xl transition-all ${
-                                      !d.currentMonth ? 'text-slate-300 opacity-40' : 
-                                      isSelected ? 'bg-emerald-600 text-white' :
-                                      isToday ? 'bg-emerald-50 text-emerald-600 font-bold border border-emerald-100' :
-                                      'hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                  >
-                                    <span className="text-xs tablet-l:text-sm font-bold">{d.day}</span>
-                                    {dotsCount > 0 && (
-                                      <div className="flex gap-0.5 mt-0.5">
-                                        {[...Array(dotsCount)].map((_, i) => (
-                                          <div key={i} className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-emerald-500'}`} />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </button>
-                                );
-                              });
-                            })()}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                {/* Timeline */}
+                <div className="bg-white rounded-[32px] border border-slate-100 shadow-[0_8px_40px_rgba(0,0,0,0.02)] overflow-hidden no-print">
+                  <div className="divide-y divide-slate-100">
+                    {(() => {
+                      const getFilteredAppointments = () => {
+                        // For day view, include FINISHED status to show completed appointments
+                        const effectiveStatusFilter = agendaViewMode === 'day' 
+                          ? [...statusFilter, 'FINISHED'].filter((v, i, a) => a.indexOf(v) === i) // Remove duplicates
+                          : statusFilter;
+                        
+                        let filtered = appointments.filter(a => effectiveStatusFilter.length === 0 || effectiveStatusFilter.includes(a.status))
+                          .filter(a => agendaSearchTerm === '' || (a.patient_name || '').toLowerCase().includes((agendaSearchTerm || '').toLowerCase()));
 
-                    <div className="divide-y divide-slate-100">
-                      {(() => {
-                        const filtered = appointments
-                          .filter(a => {
+                        if (agendaViewMode === 'day') {
+                          filtered = filtered.filter(a => {
                             const appDate = new Date(a.start_time);
-                            const isSameDay = appDate.toDateString() === selectedDate.toDateString();
-                            
-                            if (agendaViewMode === 'day') return isSameDay;
-                            
-                            if (agendaViewMode === 'week') {
-                              const day = selectedDate.getDay();
-                              const diff = (day === 0 ? 7 : day) - 1;
-                              const startOfWeek = new Date(selectedDate);
-                              startOfWeek.setDate(selectedDate.getDate() - diff);
-                              startOfWeek.setHours(0, 0, 0, 0);
-                              const endOfWeek = new Date(startOfWeek);
-                              endOfWeek.setDate(startOfWeek.getDate() + 6);
-                              endOfWeek.setHours(23, 59, 59, 999);
-                              
-                              const appDateTime = appDate.getTime();
-                              const isInWeek = appDateTime >= startOfWeek.getTime() && appDateTime <= endOfWeek.getTime();
-                              return isInWeek && appDate.getDay() === selectedWeekDay;
-                            }
-                            
-                            if (agendaViewMode === 'month') {
-                              return appDate.toDateString() === selectedDate.toDateString();
-                            }
-                            
-                            return false;
-                          })
-                          .filter(a => statusFilter.length === 0 || statusFilter.includes(a.status))
-                          .filter(a => agendaSearchTerm === '' || (a.patient_name || '').toLowerCase().includes((agendaSearchTerm || '').toLowerCase()))
-                          .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+                            const isSelectedDate = appDate.toDateString() === selectedDate.toDateString();
+                            const isFinishedPast = a.status === 'FINISHED' && appDate < new Date() && !isSelectedDate;
+                            // Include appointments from selected date OR finished appointments from the past (not the selected date)
+                            return isSelectedDate || isFinishedPast;
+                          });
+                        } else if (agendaViewMode === 'week') {
+                          const startOfWeek = new Date(selectedDate);
+                          startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
+                          const endOfWeek = new Date(startOfWeek);
+                          endOfWeek.setDate(startOfWeek.getDate() + 6);
 
-                        if (filtered.length === 0) {
-                          return (
-                            <div className="p-20 text-center">
-                              <Calendar className="mx-auto text-slate-200 mb-4" size={64} />
-                              <p className="text-slate-500 font-medium">Nenhum agendamento encontrado para este período.</p>
-                              <button 
-                                onClick={openAppointmentModal}
-                                className="mt-4 text-emerald-600 font-bold hover:underline"
-                              >
-                                Agendar agora
-                              </button>
-                            </div>
-                          );
+                          filtered = filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate >= startOfWeek && appDate <= endOfWeek;
+                          });
+                        } else if (agendaViewMode === 'month') {
+                          filtered = filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate.getMonth() === selectedDate.getMonth() && appDate.getFullYear() === selectedDate.getFullYear();
+                          });
                         }
 
-                        // Group by day for week/month views
-                        const grouped: Record<string, Appointment[]> = {};
-                        filtered.forEach(app => {
-                          const dateKey = new Date(app.start_time).toDateString();
-                          if (!grouped[dateKey]) grouped[dateKey] = [];
-                          grouped[dateKey].push(app);
-                        });
+                        return filtered.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+                      };
 
-                        const renderAppointment = (app: Appointment) => (
-                          <div key={app.id} className="p-4 tablet-l:p-6 desktop:p-8 flex flex-col tablet-l:flex-row gap-4 tablet-l:gap-6 desktop:gap-8 hover:bg-slate-50/50 transition-colors group border-b border-slate-50 last:border-0">
-                            <div className="w-full tablet-l:w-20 desktop:w-24 pt-1 flex flex-row tablet-l:flex-col items-center tablet-l:items-center justify-start tablet-l:justify-start border-b tablet-l:border-b-0 tablet-l:border-r border-slate-100 pb-2 tablet-l:pb-0 tablet-l:pr-4 desktop:pr-6 gap-2 tablet-l:gap-0">
-                              <p className="text-base tablet-l:text-lg font-black text-slate-900 leading-none">
+                      const filtered = getFilteredAppointments();
+
+                      if (filtered.length === 0 && agendaViewMode !== 'month') {
+                        return (
+                          <div className="p-20 text-center">
+                            <Calendar className="mx-auto text-slate-200 mb-4" size={64} />
+                            <p className="text-slate-500 font-medium">Nenhum agendamento encontrado para este período.</p>
+                            <button 
+                              onClick={openAppointmentModal}
+                              className="mt-4 bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 mx-auto"
+                            >
+                              Agendar agora
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      const renderAppointment = (app: Appointment, isFocusMode: boolean = false) => {
+                        const isNext = isNextAppointment(app, filtered);
+                        
+                        return (
+                          <div key={app.id} className={`p-4 sm:p-6 flex flex-col sm:flex-row gap-4 sm:gap-6 hover:bg-slate-50 transition-all group relative ${isNext && !isFocusMode ? 'border-l-4 border-primary bg-primary/5' : 'border-l-4 border-transparent'}`}>
+                            {/* Time column - hidden on week/month view mobile */}
+                            <div className={`${agendaViewMode === 'day' ? '' : 'hidden sm:flex'} w-12 sm:w-16 pt-1 flex flex-col items-center shrink-0`}>
+                              <p className={`text-[13px] sm:text-[15px] font-bold ${isNext && !isFocusMode ? 'text-primary' : 'text-slate-900'}`}>
                                 {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                               </p>
-                              <div className="hidden tablet-l:block w-full h-px bg-slate-100 my-2" />
-                              <span className="tablet-l:hidden text-slate-300">•</span>
-                              <p className="text-xs font-bold text-slate-400">
-                                {new Date(app.end_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                              </p>
+                              <div className={`w-[1px] ${agendaViewMode === 'day' ? 'flex-1' : 'h-8'} bg-slate-100 my-2`} />
                             </div>
                             
-                            <div className="flex-1 bg-white border border-slate-100 p-4 tablet-l:p-6 rounded-2xl group-hover:border-emerald-200 transition-all flex flex-col tablet-l:flex-row justify-between items-start tablet-l:items-center gap-4">
-                              <div 
-                                className="flex items-start tablet-l:items-center gap-4 tablet-l:gap-5 cursor-pointer w-full"
-                                onClick={() => openPatientRecord(app.patient_id)}
-                              >
-                                <div className="w-12 h-12 tablet-l:w-14 tablet-l:h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors shrink-0 overflow-hidden border border-slate-200">
-                                  {(() => {
-                                    const patient = patients.find(p => p.id === app.patient_id);
-                                    return patient?.photo_url ? (
-                                      <img src={patient.photo_url} alt={app.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                    ) : (
-                                      <>
-                                        <UserCircle size={28} className="tablet-l:hidden" />
-                                        <UserCircle size={32} className="hidden tablet-l:block" />
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-base tablet-l:text-lg font-bold text-slate-800 group-hover:text-emerald-900 transition-colors break-words leading-tight">{app.patient_name}</p>
-                                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
-                                    <span className="text-xs text-slate-500 italic">Procedimento não especificado</span>
-                                    <span className="hidden tablet-l:block w-1 h-1 bg-slate-300 rounded-full" />
-                                    <span className="text-[10px] tablet-l:text-xs font-bold text-slate-400 uppercase tracking-widest">{app.dentist_name}</span>
+                            <div className="flex-1 bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-sm group-hover:shadow-md transition-all flex flex-col gap-4">
+                              {/* Head: Patient info and status */}
+                              <div className="flex items-start gap-3 justify-between">
+                                <div className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer" onClick={() => openPatientRecord(app.patient_id)}>
+                                  <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 shrink-0 overflow-hidden border border-slate-200">
+                                    {(() => {
+                                      const patient = patients.find(p => p.id === app.patient_id);
+                                      return patient?.photo_url ? (
+                                        <img src={patient.photo_url} alt={app.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                      ) : (
+                                        <UserCircle size={24} />
+                                      );
+                                    })()}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-base sm:text-lg font-bold text-slate-900 truncate">{app.patient_name}</p>
+                                    <p className="text-xs sm:text-sm text-slate-500 truncate">{app.notes || 'Consulta'}</p>
                                   </div>
                                 </div>
-                              </div>
-                              
-                              <div className="flex items-center justify-between tablet-l:justify-end gap-4 w-full tablet-l:w-auto pt-4 tablet-l:pt-0 border-t tablet-l:border-t-0 border-slate-50">
-                                <div className="flex items-center gap-2">
-                                  <button 
-                                    onClick={() => sendReminder(app)}
-                                    className="p-2.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                                    title="Enviar Lembrete"
-                                  >
-                                    <Bell size={20} />
-                                  </button>
-                                  <select 
+
+                                {!isFocusMode && (
+                                  <select
                                     value={app.status}
                                     onChange={(e) => updateStatus(app.id, e.target.value as Appointment['status'])}
-                                    className="text-[10px] tablet-l:text-sm font-bold bg-slate-50 border border-slate-200 rounded-xl px-2 tablet-l:px-3 py-1.5 tablet-l:py-2 outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                    className="px-2 sm:px-3 py-1 sm:py-2 bg-white border border-slate-200 rounded text-xs sm:text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none whitespace-nowrap shrink-0"
                                   >
                                     <option value="SCHEDULED">Agendado</option>
                                     <option value="CONFIRMED">Confirmado</option>
-                                    <option value="CANCELLED">Cancelado</option>
-                                    <option value="IN_PROGRESS">Em Atendimento</option>
+                                    <option value="IN_PROGRESS">Em Andamento</option>
                                     <option value="FINISHED">Finalizado</option>
+                                    <option value="CANCELLED">Cancelado</option>
+                                    <option value="NO_SHOW">Faltou</option>
                                   </select>
-                                </div>
-                                <StatusBadge status={app.status} />
+                                )}
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <button 
+                                  onClick={() => {
+                                    const patient = patients.find(p => p.id === app.patient_id);
+                                    if (patient) openPatientRecord(patient.id);
+                                    setActiveTab('prontuario');
+                                    navigate(`/pacientes/${app.patient_id}/clinico`);
+                                  }}
+                                  className="flex-1 sm:flex-none bg-primary text-white px-4 py-2.5 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all active:scale-95"
+                                >
+                                  <Activity size={16} />
+                                  <span className="hidden sm:inline">{app.status === 'FINISHED' ? 'Ver Prontuário' : 'Iniciar Atendimento'}</span>
+                                  <span className="sm:hidden">{app.status === 'FINISHED' ? 'Ver' : 'Atender'}</span>
+                                </button>
+                                
+                                <button 
+                                  onClick={() => sendReminder(app)}
+                                  className="p-2.5 text-primary bg-primary/5 hover:bg-primary/10 rounded-full transition-all shrink-0"
+                                  title="WhatsApp"
+                                >
+                                  <MessageCircle size={18} />
+                                </button>
                               </div>
                             </div>
                           </div>
                         );
+                      };
 
-                        if (agendaViewMode === 'day' || agendaViewMode === 'week' || agendaViewMode === 'month') {
-                          const morning = filtered.filter(a => {
-                            const hour = new Date(a.start_time).getHours();
-                            return hour >= 6 && hour < 12;
-                          });
-                          const afternoon = filtered.filter(a => {
-                            const hour = new Date(a.start_time).getHours();
-                            return hour >= 12 && hour < 18;
-                          });
-                          const evening = filtered.filter(a => {
-                            const hour = new Date(a.start_time).getHours();
-                            return hour >= 18 && hour < 22;
-                          });
-                          const others = filtered.filter(a => {
-                            const hour = new Date(a.start_time).getHours();
-                            return hour < 6 || hour >= 22;
-                          });
+                      if (agendaFocusMode) {
+                        const todayStr = new Date().toDateString();
+                        const isToday = selectedDate.toDateString() === todayStr;
+                        const todayApps = filtered.filter(a => new Date(a.start_time).toDateString() === todayStr);
+                        const nextApps = todayApps
+                          .filter(a => new Date(a.start_time) > now && a.status !== 'CANCELLED' && a.status !== 'FINISHED')
+                          .slice(0, 3);
 
-                          const isToday = (() => {
-                            const today = new Date();
-                            if (agendaViewMode === 'day' || agendaViewMode === 'month') return selectedDate.toDateString() === today.toDateString();
-                            if (agendaViewMode === 'week') {
-                              const dayOfWeek = selectedDate.getDay();
-                              const diffToMon = (dayOfWeek === 0 ? 7 : dayOfWeek) - 1;
-                              const targetDate = new Date(selectedDate);
-                              targetDate.setDate(selectedDate.getDate() - diffToMon + (selectedWeekDay === 0 ? 6 : selectedWeekDay - 1));
-                              return targetDate.toDateString() === today.toDateString();
-                            }
-                            return false;
-                          })();
-
-                          const renderNowIndicator = () => (
-                            <div key="now-indicator" className="relative py-2 px-6 flex items-center gap-3 bg-rose-50/30">
-                              <div className="flex items-center gap-2 shrink-0">
-                                <div className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]" />
-                                <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">Agora — {now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        return (
+                          <div className="divide-y divide-slate-100">
+                            {/* Current Time Indicator */}
+                            {isToday && (
+                              <div className="py-4 px-6 flex items-center gap-3">
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                                  <span className="text-[11px] font-bold text-rose-500 uppercase tracking-widest">Agora</span>
+                                </div>
+                                <div className="h-[1px] flex-1 bg-rose-200/50" />
                               </div>
-                              <div className="h-px flex-1 bg-rose-200" />
-                            </div>
-                          );
-
-                          const renderPeriod = (apps: Appointment[], periodStart: number, periodEnd: number, label: string, icon: React.ReactNode) => {
-                            const nowHour = now.getHours();
-                            const showNowInThisPeriod = isToday && nowHour >= periodStart && nowHour < periodEnd;
+                            )}
                             
-                            if (apps.length === 0 && !showNowInThisPeriod) return null;
-
-                            let content;
-                            if (!showNowInThisPeriod) {
-                              content = apps.map(renderAppointment);
-                            } else {
-                              const nowTime = now.getHours() * 60 + now.getMinutes();
-                              const result = [];
-                              let nowInserted = false;
-                              
-                              for (const app of apps) {
-                                const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
-                                if (!nowInserted && nowTime < appTime) {
-                                  result.push(renderNowIndicator());
-                                  nowInserted = true;
-                                }
-                                result.push(renderAppointment(app));
-                              }
-                              
-                              if (!nowInserted) {
-                                result.push(renderNowIndicator());
-                              }
-                              content = result;
-                            }
-
-                            return (
-                              <div key={label}>
-                                <div className="bg-slate-50 px-6 py-2 border-y border-slate-100 flex items-center gap-2">
-                                  {icon}
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</span>
+                            {/* Next Appointments */}
+                            {nextApps.length > 0 ? nextApps.map(app => renderAppointment(app, true)) : (
+                              <div className="px-6 py-12 text-center">
+                                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                  <CheckCircle2 className="text-slate-200" size={32} />
                                 </div>
-                                {content}
+                                <p className="text-slate-500 font-medium">Nenhum paciente próximo para hoje.</p>
                               </div>
-                            );
-                          };
+                            )}
+                          </div>
+                        );
+                      }
 
-                          return (
-                            <div className="divide-y divide-slate-100">
-                              {(agendaViewMode === 'week' || agendaViewMode === 'month') && (
-                                <div className="bg-slate-50 px-6 py-3 border-b border-slate-100">
-                                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                                    {(() => {
-                                      if (agendaViewMode === 'week') {
-                                        const dayOfWeek = selectedDate.getDay();
-                                        const diffToMon = (dayOfWeek === 0 ? 7 : dayOfWeek) - 1;
-                                        const targetDate = new Date(selectedDate);
-                                        targetDate.setDate(selectedDate.getDate() - diffToMon + (selectedWeekDay === 0 ? 6 : selectedWeekDay - 1));
-                                        return targetDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase().replace('.', '');
-                                      }
-                                      return selectedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase().replace('.', '');
-                                    })()}
-                                  </p>
-                                </div>
-                              )}
-                              {renderPeriod(others.filter(a => new Date(a.start_time).getHours() < 6), 0, 6, "Madrugada (00:00 – 06:00)", <Clock size={14} className="text-slate-400" />)}
-                              {renderPeriod(morning, 6, 12, "Manhã (06:00 – 12:00)", <Sun size={14} className="text-amber-500" />)}
-                              {renderPeriod(afternoon, 12, 18, "Tarde (12:00 – 18:00)", <Sun size={14} className="text-orange-500" />)}
-                              {renderPeriod(evening, 18, 22, "Noite (18:00 – 22:00)", <Moon size={14} className="text-indigo-500" />)}
-                              {renderPeriod(others.filter(a => new Date(a.start_time).getHours() >= 22), 22, 24, "Noite Tardia (22:00 – 00:00)", <Moon size={14} className="text-slate-600" />)}
-                            </div>
-                          );
+                      // Full Agenda Mode - Different views based on agendaViewMode
+                      if (agendaViewMode === 'week') {
+                        // Week grid view (always show current week)
+                        const current = new Date();
+                        const startOfWeek = new Date(current);
+                        startOfWeek.setDate(current.getDate() - current.getDay());
+                        
+                        const weekDays = [];
+                        for (let i = 0; i < 7; i++) {
+                          const day = new Date(startOfWeek);
+                          day.setDate(startOfWeek.getDate() + i);
+                          weekDays.push(day);
                         }
 
-                        return Object.entries(grouped).map(([date, apps]) => (
-                          <div key={date}>
-                            <div className="bg-slate-50 px-6 py-2 border-y border-slate-100">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                {new Date(date).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
-                              </span>
+                        // Calculate earliest and latest appointment times for the week
+                        let earliestHour = 6;
+                        let latestHour = 22;
+                        
+                        if (filtered.length > 0) {
+                          const hours = filtered.map(a => new Date(a.start_time).getHours());
+                          earliestHour = Math.min(...hours);
+                          latestHour = Math.max(...hours);
+                          
+                          // Add one hour buffer before and after
+                          earliestHour = Math.max(0, earliestHour - 1);
+                          latestHour = Math.min(23, latestHour + 1);
+                        }
+
+                        const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                        const timeSlots = [];
+                        for (let h = earliestHour; h <= latestHour; h++) {
+                          timeSlots.push(h);
+                        }
+
+                        return (
+                          <div className="space-y-4">
+                            {/* Week header with day names and dates */}
+                            <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
+                              <div className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border border-slate-200 rounded-2xl overflow-hidden shadow-sm divide-x divide-slate-200">
+                                {/* Time column header */}
+                                <div className="bg-slate-50 p-2 flex items-center justify-center">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase">Hora</span>
+                                </div>
+                                
+                                {/* Day headers */}
+                                {weekDays.map((day, idx) => {
+                                  const isToday = day.toDateString() === new Date().toDateString();
+                                  return (
+                                    <div 
+                                      key={idx} 
+                                      className={`p-3 text-center ${
+                                        isToday ? 'bg-primary/10' : 'bg-slate-50'
+                                      }`}
+                                    >
+                                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                        {dayLabels[idx]}
+                                      </div>
+                                      <div className={`text-lg font-bold mt-1 ${isToday ? 'text-primary' : 'text-slate-900'}`}>
+                                        {day.getDate()}
+                                      </div>
+                                      {isToday && (
+                                        <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                            {apps.map(renderAppointment)}
+
+                            {/* Time slots grid */}
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                              {timeSlots.map(hour => (
+                                <div key={hour} className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border-b border-slate-200 last:border-b-0 min-h-[60px] divide-x divide-slate-200">
+                                  {/* Time label */}
+                                  <div className="bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
+                                    <span className="text-[10px] font-bold text-slate-400">
+                                      {String(hour).padStart(2, '0')}:00
+                                    </span>
+                                  </div>
+
+                                  {/* Day columns */}
+                                  {weekDays.map((day, dayIdx) => {
+                                    const dayAppointments = filtered.filter(a => {
+                                      const appDate = new Date(a.start_time);
+                                      const appHour = appDate.getHours();
+                                      // Show appointment if it starts in this hour
+                                      return appDate.toDateString() === day.toDateString() && appHour === hour;
+                                    }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                                    const isToday = day.toDateString() === new Date().toDateString();
+
+                                    return (
+                                      <div 
+                                        key={dayIdx}
+                                        className={`p-1.5 relative ${
+                                          isToday ? 'bg-primary/5' : 'bg-white'
+                                        } hover:bg-slate-50 transition-colors`}
+                                      >
+                                        <div className="space-y-1">
+                                          {dayAppointments.slice(0, 3).map(app => {
+                                            const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
+                                            return (
+                                              <div
+                                                key={app.id}
+                                                className="bg-primary/90 text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer hover:bg-primary transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                                                onClick={() => setWeekSheetSelectedAppointment(app)}
+                                              >
+                                                <div className="truncate leading-tight">{firstName}</div>
+                                                <div className="text-[7px] opacity-90 leading-tight">
+                                                  {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                          {dayAppointments.length > 3 && (
+                                            <div className="text-[7px] text-primary font-bold px-1 py-0.5">
+                                              +{dayAppointments.length - 3}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Bottom Sheet for selected appointment in week view */}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setWeekSheetSelectedAppointment(null)}
+                              />
+                            )}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-32"
+                              >
+                                <div className="p-6 space-y-6">
+                                  {/* Close button and header */}
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <h3 className="text-2xl font-bold text-slate-900">
+                                        {new Date(weekSheetSelectedAppointment.start_time).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', weekday: 'long' })}
+                                      </h3>
+                                      <p className="text-sm text-slate-500 mt-1">Detalhes do Agendamento</p>
+                                    </div>
+                                    <button
+                                      onClick={() => setWeekSheetSelectedAppointment(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={24} className="text-slate-400" />
+                                    </button>
+                                  </div>
+
+                                  {/* Appointment details */}
+                                  <div className="pt-4 space-y-6">
+                                    {/* Time and duration */}
+                                    <div className="space-y-2">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Horário</p>
+                                      <div className="flex items-center gap-4">
+                                        <div>
+                                          <p className="text-2xl font-bold text-primary">
+                                            {new Date(weekSheetSelectedAppointment.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                          <p className="text-[10px] text-slate-400 mt-1">
+                                            {(() => {
+                                              const start = new Date(weekSheetSelectedAppointment.start_time);
+                                              const end = new Date(weekSheetSelectedAppointment.end_time);
+                                              const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+                                              return `${mins}min`;
+                                            })()}
+                                          </p>
+                                        </div>
+                                        <div className="h-12 w-[1px] bg-slate-200" />
+                                        <div>
+                                          <p className="text-sm text-slate-500">Término</p>
+                                          <p className="text-lg font-bold text-slate-700 mt-0.5">
+                                            {new Date(weekSheetSelectedAppointment.end_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Patient info */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-3">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Paciente</p>
+                                      <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 overflow-hidden border border-slate-200 shrink-0">
+                                          {(() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            return patient?.photo_url ? (
+                                              <img src={patient.photo_url} alt={weekSheetSelectedAppointment.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                            ) : (
+                                              <UserCircle size={24} />
+                                            );
+                                          })()}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="font-bold text-slate-900">{weekSheetSelectedAppointment.patient_name}</p>
+                                          <p className="text-sm text-slate-500 truncate">{weekSheetSelectedAppointment.notes || 'Consulta'}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Status and controls */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-4">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ações</p>
+                                      <div className="space-y-3">
+                                        <select
+                                          value={weekSheetSelectedAppointment.status}
+                                          onChange={(e) => {
+                                            updateStatus(weekSheetSelectedAppointment.id, e.target.value as Appointment['status']);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full px-4 py-3 text-sm bg-white border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        >
+                                          <option value="SCHEDULED">Agendado</option>
+                                          <option value="CONFIRMED">Confirmado</option>
+                                          <option value="IN_PROGRESS">Em Andamento</option>
+                                          <option value="FINISHED">Finalizado</option>
+                                          <option value="CANCELLED">Cancelado</option>
+                                          <option value="NO_SHOW">Faltou</option>
+                                        </select>
+
+                                        <button
+                                          onClick={() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            if (patient) openPatientRecord(patient.id);
+                                            setActiveTab('prontuario');
+                                            navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                                        >
+                                          <Activity size={18} />
+                                          Iniciar Atendimento
+                                        </button>
+
+                                        <button
+                                          onClick={() => {
+                                            sendReminder(weekSheetSelectedAppointment);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-slate-50 text-primary px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-100 transition-all border border-slate-200"
+                                        >
+                                          <MessageCircle size={18} />
+                                          Enviar Lembrete WhatsApp
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
                           </div>
-                        ));
-                      })()}
-                    </div>
+                        );
+                      } else if (agendaViewMode === 'month') {
+                        // Interactive month view with bottom sheet
+                        const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+                        const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+                        
+                        const weeks = [];
+                        let currentWeek = [];
+                        let currentDate = new Date(startOfMonth);
+                        
+                        const firstDayOfWeek = startOfMonth.getDay();
+                        for (let i = 0; i < firstDayOfWeek; i++) {
+                          currentWeek.push(null);
+                        }
+                        
+                        while (currentDate <= endOfMonth) {
+                          currentWeek.push(new Date(currentDate));
+                          if (currentWeek.length === 7) {
+                            weeks.push(currentWeek);
+                            currentWeek = [];
+                          }
+                          currentDate.setDate(currentDate.getDate() + 1);
+                        }
+                        
+                        while (currentWeek.length < 7) {
+                          currentWeek.push(null);
+                        }
+                        weeks.push(currentWeek);
+
+                        const selectedDayAppointments = monthSheetSelectedDay
+                          ? filtered.filter(a => {
+                              const appDate = new Date(a.start_time);
+                              return appDate.toDateString() === monthSheetSelectedDay.toDateString();
+                            }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                          : [];
+
+                        return (
+                          <div className="space-y-4">
+                            {/* Calendar grid */}
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm bg-white">
+                              {/* Month header with navigation */}
+                              <div className="bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4 border-b border-slate-200">
+                                <div className="flex items-center justify-between">
+                                  <button
+                                    onClick={() => {
+                                      const newDate = new Date(selectedDate);
+                                      newDate.setMonth(newDate.getMonth() - 1);
+                                      setSelectedDate(newDate);
+                                    }}
+                                    className="p-2 hover:bg-white/50 rounded-full transition-colors"
+                                  >
+                                    <ChevronLeft size={20} className="text-slate-600" />
+                                  </button>
+                                  <h3 className="text-xl font-bold text-slate-900 capitalize">
+                                    {selectedDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                                  </h3>
+                                  <button
+                                    onClick={() => {
+                                      const newDate = new Date(selectedDate);
+                                      newDate.setMonth(newDate.getMonth() + 1);
+                                      setSelectedDate(newDate);
+                                    }}
+                                    className="p-2 hover:bg-white/50 rounded-full transition-colors"
+                                  >
+                                    <ChevronRight size={20} className="text-slate-600" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Day headers */}
+                              <div className="grid grid-cols-7 gap-0 border-b border-slate-200">
+                                {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
+                                  <div key={day} className="p-3 text-center border-r border-slate-100 last:border-r-0 bg-slate-50">
+                                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">{day}</p>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Calendar weeks */}
+                              {weeks.map((week, weekIndex) => (
+                                <div key={weekIndex} className="grid grid-cols-7 gap-0 border-b border-slate-200 last:border-b-0">
+                                  {week.map((day, dayIndex) => {
+                                    if (!day) {
+                                      return <div key={dayIndex} className="border-r border-slate-100 last:border-r-0 bg-slate-50/50" />;
+                                    }
+
+                                    const dayAppointments = filtered.filter(a => {
+                                      const appDate = new Date(a.start_time);
+                                      return appDate.toDateString() === day.toDateString();
+                                    });
+
+                                    const isToday = day.toDateString() === new Date().toDateString();
+                                    const isCurrentMonth = day.getMonth() === selectedDate.getMonth();
+                                    const isSelected = monthSheetSelectedDay?.toDateString() === day.toDateString();
+                                    const hasAppointments = dayAppointments.length > 0;
+
+                                    return (
+                                      <div
+                                        key={dayIndex}
+                                        onClick={() => setMonthSheetSelectedDay(day)}
+                                        className={`border-r border-slate-100 last:border-r-0 min-h-[100px] p-2 cursor-pointer transition-all relative ${
+                                          isSelected 
+                                            ? 'bg-primary/10 border-primary/50' 
+                                            : isToday 
+                                            ? 'bg-primary/5 hover:bg-primary/10' 
+                                            : 'bg-white hover:bg-slate-50'
+                                        } ${!isCurrentMonth ? 'opacity-40' : ''}`}
+                                      >
+                                        {/* Day number */}
+                                        <div className={`text-sm font-bold mb-2 ${
+                                          isToday 
+                                            ? 'text-primary' 
+                                            : isCurrentMonth 
+                                            ? 'text-slate-900' 
+                                            : 'text-slate-400'
+                                        }`}>
+                                          {day.getDate()}
+                                        </div>
+
+                                        {/* Today indicator dot */}
+                                        {isToday && (
+                                          <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary animate-pulse" />
+                                        )}
+
+                                        {/* Appointment indicators */}
+                                        {hasAppointments && (
+                                          <div className="space-y-0.5">
+                                            <div className="flex gap-0.5 flex-wrap">
+                                              {dayAppointments.slice(0, 2).map((_, i) => (
+                                                <div key={i} className="w-1.5 h-1.5 rounded-full bg-primary/70" />
+                                              ))}
+                                            </div>
+                                            <div className="text-[10px] font-bold text-primary">
+                                              {dayAppointments.length} {dayAppointments.length === 1 ? 'consulta' : 'consultas'}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Bottom Sheet for selected day */}
+                            {monthSheetSelectedDay && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setMonthSheetSelectedDay(null)}
+                              />
+                            )}
+                            {monthSheetSelectedDay && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-32"
+                              >
+                                <div className="p-6 space-y-6">
+                                  {/* Close button and header */}
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <h3 className="text-2xl font-bold text-slate-900">
+                                        {monthSheetSelectedDay.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', weekday: 'long' })}
+                                      </h3>
+                                      <p className="text-sm text-slate-500 mt-1">
+                                        {selectedDayAppointments.length} {selectedDayAppointments.length === 1 ? 'agendamento' : 'agendamentos'}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => setMonthSheetSelectedDay(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={24} className="text-slate-400" />
+                                    </button>
+                                  </div>
+
+                                  {/* Appointments list for selected day */}
+                                  {selectedDayAppointments.length > 0 ? (
+                                    <div className="space-y-4 divide-y divide-slate-100">
+                                      {selectedDayAppointments.map(app => (
+                                        <div key={app.id} className="pt-4 first:pt-0">
+                                          <div className="flex items-start gap-4">
+                                            {/* Time */}
+                                            <div className="flex-shrink-0 text-center">
+                                              <p className="text-lg font-bold text-primary">
+                                                {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                              </p>
+                                              <p className="text-[10px] text-slate-400 mt-1">
+                                                {(() => {
+                                                  const start = new Date(app.start_time);
+                                                  const end = new Date(app.end_time);
+                                                  const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+                                                  return `${mins}min`;
+                                                })()}
+                                              </p>
+                                            </div>
+
+                                            {/* Patient info and actions */}
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="text-base font-bold text-slate-900">{app.patient_name}</p>
+                                                  <p className="text-sm text-slate-500 truncate">{app.notes || 'Consulta'}</p>
+                                                </div>
+                                                <button
+                                                  onClick={() => {
+                                                    const patient = patients.find(p => p.id === app.patient_id);
+                                                    if (patient) openPatientRecord(patient.id);
+                                                    setActiveTab('prontuario');
+                                                    navigate(`/pacientes/${app.patient_id}/clinico`);
+                                                    setMonthSheetSelectedDay(null);
+                                                  }}
+                                                  className="px-3 py-1.5 bg-primary text-white rounded-full text-xs font-bold hover:opacity-90 transition-all shrink-0"
+                                                >
+                                                  Atender
+                                                </button>
+                                              </div>
+
+                                              {/* Status and actions */}
+                                              <div className="flex items-center gap-2 mt-3">
+                                                <select
+                                                  value={app.status}
+                                                  onChange={(e) => {
+                                                    updateStatus(app.id, e.target.value as Appointment['status']);
+                                                    setMonthSheetSelectedDay(null);
+                                                  }}
+                                                  className="px-2 py-1 text-xs bg-white border border-slate-200 rounded font-medium focus:ring-2 focus:ring-primary/20 outline-none"
+                                                >
+                                                  <option value="SCHEDULED">Agendado</option>
+                                                  <option value="CONFIRMED">Confirmado</option>
+                                                  <option value="IN_PROGRESS">Em Andamento</option>
+                                                  <option value="FINISHED">Finalizado</option>
+                                                  <option value="CANCELLED">Cancelado</option>
+                                                  <option value="NO_SHOW">Faltou</option>
+                                                </select>
+                                                <button
+                                                  onClick={() => sendReminder(app)}
+                                                  className="p-1.5 text-primary bg-primary/5 hover:bg-primary/10 rounded-full transition-all"
+                                                  title="WhatsApp"
+                                                >
+                                                  <MessageCircle size={16} />
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="py-12 text-center space-y-4">
+                                      <Calendar className="mx-auto text-slate-200 mb-4" size={48} />
+                                      <p className="text-slate-500 font-medium">Nenhum agendamento para este dia</p>
+                                      <button
+                                        onClick={() => {
+                                          // Pre-fill the appointment modal with the selected date
+                                          const startDateTime = new Date(monthSheetSelectedDay);
+                                          startDateTime.setHours(9, 0, 0, 0); // Default to 9:00 AM
+                                          const endDateTime = new Date(monthSheetSelectedDay);
+                                          endDateTime.setHours(10, 0, 0, 0); // Default to 10:00 AM
+                                          
+                                          setNewAppointment({
+                                            patient_id: '',
+                                            dentist_id: user?.id ? user.id.toString() : '',
+                                            start_time: startDateTime.toISOString().slice(0, 16), // Format for datetime-local
+                                            end_time: endDateTime.toISOString().slice(0, 16),
+                                            notes: ''
+                                          });
+                                          setMonthSheetSelectedDay(null);
+                                          setIsModalOpen(true);
+                                        }}
+                                        className="bg-primary text-white px-6 py-3 rounded-full font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 mx-auto"
+                                      >
+                                        <Plus size={18} />
+                                        Criar Nova Consulta
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+
+                          </div>
+                        );
+                      }
+
+                      // Day view - Group by time periods
+                      const todayAppointments = filtered.filter(a => {
+                        const appDate = new Date(a.start_time);
+                        return appDate.toDateString() === selectedDate.toDateString();
+                      });
+
+                      const pastFinishedAppointments = filtered.filter(a => {
+                        const appDate = new Date(a.start_time);
+                        return a.status === 'FINISHED' && appDate < new Date() && appDate.toDateString() !== selectedDate.toDateString();
+                      }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()); // Most recent first
+
+                      const morning = todayAppointments.filter(a => {
+                        const hour = new Date(a.start_time).getHours();
+                        return hour >= 6 && hour < 12;
+                      });
+                      const afternoon = todayAppointments.filter(a => {
+                        const hour = new Date(a.start_time).getHours();
+                        return hour >= 12 && hour < 18;
+                      });
+                      const evening = todayAppointments.filter(a => {
+                        const hour = new Date(a.start_time).getHours();
+                        return hour >= 18 && hour < 22;
+                      });
+
+                      const isToday = selectedDate.toDateString() === new Date().toDateString();
+
+                      const renderNowIndicator = () => (
+                        <div key="now-indicator" className="py-4 px-6 flex items-center gap-3">
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                            <span className="text-[11px] font-bold text-rose-500 uppercase tracking-widest">Agora</span>
+                          </div>
+                          <div className="h-[1px] flex-1 bg-rose-200/50" />
+                        </div>
+                      );
+
+                      const renderPeriod = (apps: Appointment[], periodStart: number, periodEnd: number, label: string) => {
+                        const nowHour = now.getHours();
+                        const showNowInThisPeriod = isToday && nowHour >= periodStart && nowHour < periodEnd;
+                        
+                        if (apps.length === 0 && !showNowInThisPeriod) return null;
+
+                        let content;
+                        if (!showNowInThisPeriod) {
+                          content = apps.map(app => renderAppointment(app));
+                        } else {
+                          const nowTime = now.getHours() * 60 + now.getMinutes();
+                          const result = [];
+                          let nowInserted = false;
+                          
+                          for (const app of apps) {
+                            const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
+                            if (!nowInserted && nowTime < appTime) {
+                              result.push(renderNowIndicator());
+                              nowInserted = true;
+                            }
+                            result.push(renderAppointment(app));
+                          }
+                          
+                          if (!nowInserted) {
+                            result.push(renderNowIndicator());
+                          }
+                          content = result;
+                        }
+
+                        return (
+                          <div key={label} className="py-2">
+                            <div className="px-6 py-2 flex items-center gap-2">
+                              <span className="text-[11px] font-bold text-[#8E8E93] uppercase tracking-wider">{label}</span>
+                            </div>
+                            {content}
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <div className="divide-y divide-[#C6C6C8]/5">
+                          {/* Past finished appointments */}
+                          {pastFinishedAppointments.length > 0 && (
+                            <div className="py-4">
+                              <div className="px-6 py-2 flex items-center gap-2">
+                                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Consultas Anteriores Realizadas</span>
+                              </div>
+                              <div className="space-y-2">
+                                {pastFinishedAppointments.map(app => renderAppointment(app))}
+                              </div>
+                            </div>
+                          )}
+                          {renderPeriod(morning, 6, 12, "Manhã")}
+                          {renderPeriod(afternoon, 12, 18, "Tarde")}
+                          {renderPeriod(evening, 18, 24, "Noite")}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -2388,8 +2929,21 @@ export default function App() {
             {activeTab === 'pacientes' && (
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                  <h3 className="text-2xl font-bold text-slate-900">Gestão de Pacientes</h3>
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-900">Pacientes</h3>
+                    <p className="text-sm text-slate-500">Gestão e prontuários de pacientes</p>
+                  </div>
                   <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                    <div className="relative w-full sm:w-64">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input 
+                        type="text" 
+                        placeholder="Buscar paciente..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
+                      />
+                    </div>
                     <button 
                       onClick={() => {
                         setExportType('patients');
@@ -2402,7 +2956,7 @@ export default function App() {
                     </button>
                     <button 
                       onClick={() => setIsPatientModalOpen(true)}
-                      className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
+                      className="bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
                     >
                       <Plus size={18} />
                       Novo Paciente
@@ -2437,7 +2991,7 @@ export default function App() {
                             >
                               <td className="px-6 py-4">
                                 <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center font-bold overflow-hidden border border-emerald-200">
+                                  <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold overflow-hidden border border-primary/20">
                                     {patient.photo_url ? (
                                       <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                                     ) : (
@@ -2454,12 +3008,20 @@ export default function App() {
                               </td>
                               <td className="px-6 py-4 text-slate-500 text-sm">12/02/2024</td>
                               <td className="px-6 py-4 text-right">
-                                <button 
-                                  onClick={() => openPatientRecord(patient.id)}
-                                  className="text-emerald-600 font-bold text-sm hover:underline"
-                                >
-                                  Ver Prontuário
-                                </button>
+                                <div className="flex flex-col items-end gap-1">
+                                  <button 
+                                    onClick={() => openPatientRecord(patient.id)}
+                                    className="text-primary font-bold text-sm hover:underline"
+                                  >
+                                    Ver Prontuário
+                                  </button>
+                                  <Link 
+                                    to={`/pacientes/${patient.id}/clinico`}
+                                    className="text-blue-600 font-bold text-sm hover:underline"
+                                  >
+                                    Fluxo Clínico
+                                  </Link>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -2483,7 +3045,7 @@ export default function App() {
                         >
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center font-bold">
+                              <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold">
                                 {(patient.name || '?').charAt(0)}
                               </div>
                               <div>
@@ -2491,7 +3053,16 @@ export default function App() {
                                 <p className="text-[10px] text-slate-400 font-mono">{patient.cpf || 'Sem CPF'}</p>
                               </div>
                             </div>
-                            <ChevronRight size={18} className="text-slate-300" />
+                            <div className="flex items-center gap-2">
+                              <Link 
+                                to={`/pacientes/${patient.id}/clinico`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-2 bg-blue-50 text-blue-600 rounded-lg"
+                              >
+                                <Activity size={16} />
+                              </Link>
+                              <ChevronRight size={18} className="text-slate-300" />
+                            </div>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             <div className="bg-slate-50 p-2 rounded-lg">
@@ -2529,7 +3100,7 @@ export default function App() {
                     <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
                       <div className="flex flex-col items-center mb-6">
                         <div className="relative group">
-                          <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-emerald-500 transition-all">
+                          <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-primary transition-all">
                             {selectedPatient.photo_url ? (
                               <img 
                                 src={selectedPatient.photo_url} 
@@ -2541,7 +3112,7 @@ export default function App() {
                               <UserCircle size={48} />
                             )}
                           </div>
-                          <label className="absolute -bottom-2 -right-2 p-2 bg-emerald-600 text-white rounded-xl cursor-pointer hover:bg-emerald-700 transition-all">
+                          <label className="absolute -bottom-2 -right-2 p-2 bg-primary text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-all">
                             <Camera size={16} />
                             <input 
                               type="file" 
@@ -2553,7 +3124,7 @@ export default function App() {
                         </div>
                       </div>
                       <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <UserCircle size={18} className="text-emerald-600" />
+                        <UserCircle size={18} className="text-primary" />
                         Dados Pessoais
                       </h4>
                       <div className="space-y-3 text-sm">
@@ -2574,7 +3145,7 @@ export default function App() {
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
                           <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                             rows={3}
                             value={selectedPatient.anamnesis?.medical_history || ''}
                             onChange={(e) => setSelectedPatient({
@@ -2591,7 +3162,7 @@ export default function App() {
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
                           <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                             rows={2}
                             value={selectedPatient.anamnesis?.allergies || ''}
                             onChange={(e) => setSelectedPatient({
@@ -2608,7 +3179,7 @@ export default function App() {
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
                           <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                             rows={2}
                             value={selectedPatient.anamnesis?.medications || ''}
                             onChange={(e) => setSelectedPatient({
@@ -2640,7 +3211,7 @@ export default function App() {
                             onClick={() => setSelectedPatientTab(tab as any)}
                             className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
                               selectedPatientTab === tab 
-                                ? 'border-emerald-600 text-emerald-600 bg-emerald-50/30' 
+                                ? 'border-primary text-primary bg-primary/5' 
                                 : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
                             }`}
                           >
@@ -2654,12 +3225,12 @@ export default function App() {
                           <>
                             <div className="flex justify-between items-center mb-6">
                               <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ClipboardList size={18} className="text-emerald-600" />
+                                <ClipboardList size={18} className="text-primary" />
                                 Histórico de Evolução
                               </h4>
                               <button 
                                 onClick={() => setIsEvolutionFormOpen(!isEvolutionFormOpen)}
-                                className="text-xs font-bold text-emerald-600 flex items-center gap-1 hover:underline"
+                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
                               >
                                 <Plus size={14} className={isEvolutionFormOpen ? 'rotate-45' : ''} /> 
                                 {isEvolutionFormOpen ? 'Cancelar' : 'Nova Evolução'}
@@ -2674,14 +3245,14 @@ export default function App() {
                                   exit={{ height: 0, opacity: 0 }}
                                   className="overflow-hidden mb-6"
                                 >
-                                  <div className="bg-slate-50 p-4 rounded-xl border border-emerald-100 space-y-4">
+                                  <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 space-y-4">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                       <div>
                                         <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Procedimento</label>
                                         <input 
                                           type="text"
                                           placeholder="Ex: Limpeza, Restauração..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500/20"
+                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20"
                                           value={newEvolution.procedure}
                                           onChange={(e) => setNewEvolution({...newEvolution, procedure: e.target.value})}
                                         />
@@ -2690,9 +3261,9 @@ export default function App() {
                                         <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Notas</label>
                                         <textarea 
                                           placeholder="Descreva a evolução do paciente..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 resize-none"
+                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
                                           rows={2}
-                                          value={newEvolution.notes}
+                                          value={newEvolution.notes || ''}
                                           onChange={(e) => setNewEvolution({...newEvolution, notes: e.target.value})}
                                         />
                                       </div>
@@ -2707,14 +3278,14 @@ export default function App() {
                                       <button 
                                         onClick={() => {
                                           if (newEvolution.notes || newEvolution.procedure) {
-                                            addEvolution(newEvolution.notes, newEvolution.procedure);
+                                            addEvolution({ notes: newEvolution.notes, procedure: newEvolution.procedure });
                                             setNewEvolution({ notes: '', procedure: '' });
                                             setIsEvolutionFormOpen(false);
                                           } else {
                                             alert('Preencha pelo menos um campo (Procedimento ou Notas).');
                                           }
                                         }}
-                                        className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors"
+                                        className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors"
                                       >
                                         Adicionar Registro
                                       </button>
@@ -2728,13 +3299,13 @@ export default function App() {
                               {selectedPatient.evolution && selectedPatient.evolution.length > 0 ? (
                                 selectedPatient.evolution.map((evo) => (
                                   <div key={evo.id} className="relative pl-6 border-l-2 border-slate-100 pb-6 last:pb-0">
-                                    <div className="absolute -left-[9px] top-0 w-4 h-4 bg-white border-2 border-emerald-500 rounded-full" />
+                                    <div className="absolute -left-[9px] top-0 w-4 h-4 bg-white border-2 border-primary rounded-full" />
                                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                                       <div className="flex justify-between items-start mb-2">
                                         <span className="text-[10px] font-bold text-slate-400 uppercase">
                                           {formatDate(evo.date)}
                                         </span>
-                                        <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
                                           {evo.procedure_performed}
                                         </span>
                                       </div>
@@ -2754,12 +3325,12 @@ export default function App() {
                           <div className="space-y-6">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                               <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ImageIcon size={18} className="text-emerald-600" />
+                                <ImageIcon size={18} className="text-primary" />
                                 Imagens e Exames (RX)
                               </h4>
                               <button 
                                 onClick={() => setIsImageModalOpen(true)}
-                                className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                                className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors flex items-center gap-2"
                               >
                                 <Upload size={14} />
                                 Upload
@@ -2807,7 +3378,7 @@ export default function App() {
                           <div className="space-y-8">
                             <div className="flex justify-between items-center">
                               <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <DollarSign size={18} className="text-emerald-600" />
+                                <DollarSign size={18} className="text-primary" />
                                 Histórico Financeiro do Paciente
                               </h4>
                               <button 
@@ -2815,7 +3386,7 @@ export default function App() {
                                   setNewPaymentPlan({...newPaymentPlan, patient_id: selectedPatient.id.toString()});
                                   setIsPaymentPlanModalOpen(true);
                                 }}
-                                className="text-xs font-bold text-emerald-600 flex items-center gap-1 hover:underline"
+                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
                               >
                                 <Plus size={14} /> 
                                 Novo Plano de Pagamento
@@ -2840,7 +3411,7 @@ export default function App() {
                                           </p>
                                         </div>
                                         <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                          plan.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 
+                                          plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 
                                           plan.status === 'CANCELLED' ? 'bg-slate-200 text-slate-600' : 
                                           hasOverdue ? 'bg-rose-100 text-rose-700' :
                                           'bg-blue-100 text-blue-700'
@@ -2865,7 +3436,7 @@ export default function App() {
                                             </div>
                                             <div className="flex items-center gap-3">
                                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                inst.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 
+                                                inst.status === 'PAID' ? 'bg-primary/10 text-primary' : 
                                                 isOverdue(inst.due_date) ? 'bg-rose-100 text-rose-700' : 
                                                 'bg-amber-100 text-amber-700'
                                               }`}>
@@ -2874,7 +3445,7 @@ export default function App() {
                                               {inst.status === 'PENDING' && (
                                                 <button 
                                                   onClick={() => handlePayInstallment(inst.id, 'Dinheiro')}
-                                                  className="text-[10px] font-bold text-emerald-600 hover:underline"
+                                                  className="text-[10px] font-bold text-primary hover:underline"
                                                 >
                                                   Pagar
                                                 </button>
@@ -2923,13 +3494,13 @@ export default function App() {
                                       <tr key={t.id} className="hover:bg-slate-50">
                                         <td className="px-4 py-3 text-slate-500">{formatDate(t.date)}</td>
                                         <td className="px-4 py-3 font-medium text-slate-700">{t.description}</td>
-                                        <td className={`px-4 py-3 text-right font-bold ${t.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                        <td className={`px-4 py-3 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
                                           {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                           <button 
                                             onClick={() => generateReceipt(t)}
-                                            className="p-1.5 text-slate-400 hover:text-emerald-600 transition-colors"
+                                            className="p-1.5 text-slate-400 hover:text-primary transition-colors"
                                             title="Gerar Recibo"
                                           >
                                             <FileText size={16} />
@@ -2970,6 +3541,10 @@ export default function App() {
             )}
             {activeTab === 'financeiro' && (
               <div className="space-y-6">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Financeiro</h2>
+                  <p className="text-sm text-slate-500">Controle de transações e parcelamentos</p>
+                </div>
                 <div className="flex border-b border-slate-100 mb-6">
                   {['transacoes', 'parcelamentos'].map((subTab) => (
                     <button
@@ -2977,7 +3552,7 @@ export default function App() {
                       onClick={() => setFinanceSubTab(subTab as any)}
                       className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
                         financeSubTab === subTab 
-                          ? 'border-emerald-600 text-emerald-600 bg-emerald-50/30' 
+                          ? 'border-primary text-primary bg-primary/5' 
                           : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
                       }`}
                     >
@@ -2993,7 +3568,7 @@ export default function App() {
                         <select 
                           value={financeFilter.period}
                           onChange={(e) => setFinanceFilter({...financeFilter, period: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-emerald-500/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="day">Hoje</option>
                           <option value="week">Últimos 7 dias</option>
@@ -3003,7 +3578,7 @@ export default function App() {
                         <select 
                           value={financeFilter.type}
                           onChange={(e) => setFinanceFilter({...financeFilter, type: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-emerald-500/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="all">Todos os Tipos</option>
                           <option value="INCOME">Receitas</option>
@@ -3012,7 +3587,7 @@ export default function App() {
                         <select 
                           value={financeFilter.category}
                           onChange={(e) => setFinanceFilter({...financeFilter, category: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-emerald-500/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="all">Todas Categorias</option>
                           <option value="Procedimentos">Procedimentos</option>
@@ -3058,7 +3633,7 @@ export default function App() {
                             setTransactionType('INCOME');
                             setIsTransactionModalOpen(true);
                           }}
-                          className="flex-1 sm:flex-none bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                          className="flex-1 sm:flex-none bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold text-sm shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                         >
                           <Plus size={18} />
                           Receita
@@ -3070,7 +3645,7 @@ export default function App() {
                       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
                         <div className="flex items-center justify-between mb-4">
                           <p className="text-xs font-bold text-slate-400 uppercase">Receita Total</p>
-                          <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
+                          <div className="w-8 h-8 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
                             <DollarSign size={16} />
                           </div>
                         </div>
@@ -3140,14 +3715,14 @@ export default function App() {
                                 <td className="px-6 py-4 text-xs text-slate-500 font-medium">
                                   {t.payment_method}
                                 </td>
-                                <td className={`px-6 py-4 text-right font-bold ${t.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                <td className={`px-6 py-4 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
                                   {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                   <div className="flex justify-end gap-2">
                                     <button 
                                       onClick={() => generateReceipt(t)}
-                                      className="p-2 text-slate-300 hover:text-emerald-600 transition-colors"
+                                      className="p-2 text-slate-300 hover:text-primary transition-colors"
                                       title="Gerar Recibo"
                                     >
                                       <FileText size={16} />
@@ -3187,11 +3762,11 @@ export default function App() {
                             </div>
                             <div className="text-right flex items-center gap-3">
                               <div>
-                                <p className={`font-bold text-sm ${t.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                <p className={`font-bold text-sm ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
                                   {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                 </p>
                                 <div className="flex justify-end gap-2 mt-1">
-                                  <button onClick={() => generateReceipt(t)} className="text-[10px] text-emerald-600 font-bold uppercase">Recibo</button>
+                                  <button onClick={() => generateReceipt(t)} className="text-[10px] text-primary font-bold uppercase">Recibo</button>
                                   <button onClick={() => handleDeleteTransaction(t.id)} className="text-[10px] text-rose-500 font-bold uppercase">Excluir</button>
                                 </div>
                               </div>
@@ -3225,10 +3800,10 @@ export default function App() {
                       </div>
                       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
                         <p className="text-xs font-bold text-slate-400 uppercase mb-2">Recebido Hoje</p>
-                        <h4 className="text-xl font-bold text-emerald-600">
+                        <h4 className="text-xl font-bold text-primary">
                           {(financialSummary?.todayRevenue || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                         </h4>
-                        <p className="text-[10px] text-emerald-500 font-bold mt-1 uppercase">Pagamentos confirmados</p>
+                        <p className="text-[10px] text-primary font-bold mt-1 uppercase">Pagamentos confirmados</p>
                       </div>
                       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
                         <p className="text-xs font-bold text-slate-400 uppercase mb-2">Receita Mensal</p>
@@ -3244,7 +3819,7 @@ export default function App() {
                         <h3 className="font-bold text-slate-800">Planos de Parcelamento Ativos</h3>
                         <button 
                           onClick={() => setIsPaymentPlanModalOpen(true)}
-                          className="text-xs font-bold text-emerald-600 flex items-center gap-1 hover:underline w-full sm:w-auto justify-center sm:justify-start py-2 sm:py-0 border sm:border-0 border-emerald-100 rounded-lg sm:rounded-none"
+                          className="text-xs font-bold text-primary flex items-center gap-1 hover:underline w-full sm:w-auto justify-center sm:justify-start py-2 sm:py-0 border sm:border-0 border-primary/10 rounded-lg sm:rounded-none"
                         >
                           <Plus size={14} /> Novo Plano
                         </button>
@@ -3276,7 +3851,7 @@ export default function App() {
                                     <td className="px-6 py-4 text-sm text-slate-600 break-words hidden md:table-cell">{plan.procedure}</td>
                                   <td className="px-6 py-4 hidden sm:table-cell">
                                     <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${progress}%` }} />
+                                      <div className="bg-primary h-full transition-all" style={{ width: `${progress}%` }} />
                                     </div>
                                     <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{paidCount}/{plan.installments_count} parcelas pagas</p>
                                   </td>
@@ -3285,7 +3860,7 @@ export default function App() {
                                   </td>
                                   <td className="px-6 py-4 hidden md:table-cell">
                                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                      plan.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                                      plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 'bg-blue-100 text-blue-700'
                                     }`}>
                                       {plan.status === 'COMPLETED' ? 'Concluído' : 'Em Aberto'}
                                     </span>
@@ -3302,7 +3877,7 @@ export default function App() {
                                             alert('Todas as parcelas deste plano já foram pagas.');
                                           }
                                         }}
-                                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                        className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors"
                                         title="Receber Parcela"
                                       >
                                         <DollarSign size={16} />
@@ -3346,7 +3921,7 @@ export default function App() {
                                   <p className="text-xs text-slate-500 truncate">{plan.procedure}</p>
                                 </div>
                                 <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${
-                                  plan.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                                  plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 'bg-blue-100 text-blue-700'
                                 }`}>
                                   {plan.status === 'COMPLETED' ? 'Concluído' : 'Em Aberto'}
                                 </span>
@@ -3358,7 +3933,7 @@ export default function App() {
                                   <p className="text-[10px] font-bold text-slate-600">{paidCount}/{plan.installments_count} parcelas</p>
                                 </div>
                                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-emerald-500 h-full transition-all" style={{ width: `${progress}%` }} />
+                                  <div className="bg-primary h-full transition-all" style={{ width: `${progress}%` }} />
                                 </div>
                               </div>
                               
@@ -3380,7 +3955,7 @@ export default function App() {
                                         alert('Todas as parcelas deste plano já foram pagas.');
                                       }
                                     }}
-                                    className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-600 rounded-lg font-bold text-xs hover:bg-emerald-100 transition-colors"
+                                    className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg font-bold text-xs hover:bg-primary/20 transition-colors"
                                   >
                                     <DollarSign size={14} />
                                     Receber
@@ -3413,6 +3988,10 @@ export default function App() {
 
             {(activeTab === 'admin' && user?.role?.toUpperCase() === 'ADMIN') && (
               <div className="max-w-screen-xl mx-auto space-y-8">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Administração</h2>
+                  <p className="text-sm text-slate-500">Gestão de dentistas e aprovações</p>
+                </div>
                 {/* Painel de Aprovação */}
                 {adminUsers.filter(u => u.status === 'pending').length > 0 && (
                   <div className="bg-amber-50 p-4 md:p-8 rounded-3xl border border-amber-100 shadow-sm">
@@ -3435,7 +4014,7 @@ export default function App() {
                           <div className="flex gap-2">
                             <button 
                               onClick={() => updateUserStatus(u.id, 'active')}
-                              className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                              className="p-2 bg-primary text-white rounded-lg hover:opacity-90 transition-colors"
                               title="Aprovar"
                             >
                               <CheckCircle2 size={16} />
@@ -3463,7 +4042,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => setIsDentistModalOpen(true)}
-                      className="w-full sm:w-auto bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-emerald-100"
+                      className="w-full sm:w-auto bg-primary text-white px-6 py-3 rounded-2xl font-bold hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-[0_12px_36px_rgba(38,78,54,0.12)]"
                     >
                       <UserPlus size={20} />
                       Adicionar Dentista
@@ -3478,14 +4057,14 @@ export default function App() {
                         placeholder="Buscar dentista por nome ou e-mail..."
                         value={dentistSearchTerm}
                         onChange={(e) => setDentistSearchTerm(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                       />
                     </div>
                     <div className="sm:w-48">
                       <select
                         value={dentistStatusFilter}
                         onChange={(e) => setDentistStatusFilter(e.target.value as any)}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-600 font-medium"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-slate-600 font-medium"
                       >
                         <option value="all">Todos os Status</option>
                         <option value="active">Ativos</option>
@@ -3531,7 +4110,7 @@ export default function App() {
                               <td className="px-6 py-4 text-slate-500 text-sm">{u.email}</td>
                               <td className="px-6 py-4">
                                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                  u.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                                  u.status === 'active' ? 'bg-primary/10 text-primary' :
                                   'bg-rose-100 text-rose-700'
                                 }`}>
                                   {u.status === 'active' ? 'Ativo' : 'Bloqueado'}
@@ -3551,7 +4130,7 @@ export default function App() {
                                   {u.status !== 'active' && (
                                     <button 
                                       onClick={() => updateUserStatus(u.id, 'active')}
-                                      className="px-3 py-1.5 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+                                      className="px-3 py-1.5 bg-primary text-white text-[10px] font-bold rounded-lg hover:opacity-90 transition-colors"
                                     >
                                       Ativar
                                     </button>
@@ -3595,7 +4174,7 @@ export default function App() {
                               </div>
                             </div>
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              u.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                              u.status === 'active' ? 'bg-primary/10 text-primary' :
                               'bg-rose-100 text-rose-700'
                             }`}>
                               {u.status === 'active' ? 'Ativo' : 'Bloqueado'}
@@ -3615,7 +4194,7 @@ export default function App() {
                             {u.status !== 'active' && (
                               <button 
                                 onClick={() => updateUserStatus(u.id, 'active')}
-                                className="flex-1 py-2 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+                                className="flex-1 py-2 bg-primary text-white text-[10px] font-bold rounded-lg hover:opacity-90 transition-colors"
                               >
                                 Ativar
                               </button>
@@ -3638,22 +4217,32 @@ export default function App() {
             )}
 
             {activeTab === 'documentos' && (
-              <Documents patients={patients} profile={profile} apiFetch={apiFetch} imprimirDocumento={imprimirDocumento} />
+              <div className="space-y-8">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Documentos</h2>
+                  <p className="text-sm text-slate-500">Emissão de receitas, atestados e contratos</p>
+                </div>
+                <Documents patients={patients} profile={profile} apiFetch={apiFetch} imprimirDocumento={imprimirDocumento} />
+              </div>
             )}
 
             {activeTab === 'configuracoes' && profile && (
               <div className="max-w-screen-xl mx-auto space-y-8">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Configurações</h2>
+                  <p className="text-sm text-slate-500">Gerencie seu perfil e preferências</p>
+                </div>
                 <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
                   <div className="flex flex-col items-center mb-10">
                     <div className="relative group">
-                      <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-50 bg-slate-100 flex items-center justify-center text-slate-400">
+                      <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-primary/5 shadow-lg bg-slate-100 flex items-center justify-center text-slate-400">
                         {profile.photo_url ? (
                           <img src={profile.photo_url} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <UserCircle size={80} />
                         )}
                       </div>
-                      <label className="absolute bottom-0 right-0 bg-emerald-600 text-white p-2 rounded-full cursor-pointer hover:bg-emerald-700 transition-all">
+                      <label className="absolute bottom-0 right-0 bg-primary text-white p-2 rounded-full shadow-lg cursor-pointer hover:opacity-90 transition-all">
                         <Camera size={18} />
                         <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} />
                       </label>
@@ -3671,7 +4260,7 @@ export default function App() {
                           type="text" 
                           value={profile.name}
                           onChange={(e) => setProfile({...profile, name: e.target.value})}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                         />
                       </div>
                       <div>
@@ -3681,7 +4270,7 @@ export default function App() {
                           type="email" 
                           value={profile.email}
                           onChange={(e) => setProfile({...profile, email: e.target.value})}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                         />
                       </div>
                       <div>
@@ -3690,7 +4279,7 @@ export default function App() {
                           type="text" 
                           value={profile.phone || ''}
                           onChange={(e) => setProfile({...profile, phone: e.target.value})}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                           placeholder="(00) 00000-0000"
                         />
                       </div>
@@ -3702,7 +4291,7 @@ export default function App() {
                               type="text" 
                               value={profile.cro || ''}
                               onChange={(e) => setProfile({...profile, cro: e.target.value})}
-                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                               placeholder="Ex: 12345-SP"
                             />
                           </div>
@@ -3712,7 +4301,7 @@ export default function App() {
                               type="text" 
                               value={profile.specialty || ''}
                               onChange={(e) => setProfile({...profile, specialty: e.target.value})}
-                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                               placeholder="Ex: Ortodontia"
                             />
                           </div>
@@ -3726,7 +4315,7 @@ export default function App() {
                               type="text" 
                               value={profile.clinic_name || ''}
                               onChange={(e) => setProfile({...profile, clinic_name: e.target.value})}
-                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                               placeholder="Ex: Clínica Sorriso Perfeito"
                             />
                           </div>
@@ -3736,7 +4325,7 @@ export default function App() {
                               type="text" 
                               value={profile.clinic_address || ''}
                               onChange={(e) => setProfile({...profile, clinic_address: e.target.value})}
-                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                               placeholder="Rua Exemplo, 123 - Centro"
                             />
                           </div>
@@ -3748,7 +4337,7 @@ export default function App() {
                           type="password" 
                           value={profilePassword}
                           onChange={(e) => setProfilePassword(e.target.value)}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                           placeholder="Deixe em branco para manter a atual"
                         />
                       </div>
@@ -3761,7 +4350,7 @@ export default function App() {
                           rows={4}
                           value={profile.bio || ''}
                           onChange={(e) => setProfile({...profile, bio: e.target.value})}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                           placeholder="Conte um pouco sobre sua trajetória e formação..."
                         />
                       </div>
@@ -3771,7 +4360,7 @@ export default function App() {
                       <button 
                         type="submit"
                         disabled={isSavingProfile}
-                        className="bg-emerald-600 text-white px-10 py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
+                        className="bg-primary text-white px-10 py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
                       >
                         {isSavingProfile ? 'Salvando...' : 'Salvar Alterações'}
                       </button>
@@ -3781,35 +4370,35 @@ export default function App() {
 
                 <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
                   <h3 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-3">
-                    <FileText className="text-emerald-600" />
+                    <FileText className="text-primary" />
                     Informações Legais
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Link 
                       to="/termos" 
                       target="_blank"
-                      className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-emerald-200 transition-all"
+                      className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-primary/30 transition-all"
                     >
                       <div>
                         <p className="font-bold text-slate-800 text-sm">Termos de Uso</p>
                         <p className="text-[10px] text-slate-500">Leia as regras de uso da plataforma</p>
                       </div>
-                      <ChevronRight className="text-slate-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" size={16} />
+                      <ChevronRight className="text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all" size={16} />
                     </Link>
                     <Link 
                       to="/privacidade" 
                       target="_blank"
-                      className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-emerald-200 transition-all"
+                      className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-primary/30 transition-all"
                     >
                       <div>
                         <p className="font-bold text-slate-800 text-sm">Política de Privacidade</p>
                         <p className="text-[10px] text-slate-500">Saiba como cuidamos dos seus dados</p>
                       </div>
-                      <ChevronRight className="text-slate-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" size={16} />
+                      <ChevronRight className="text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all" size={16} />
                     </Link>
                   </div>
-                  <div className="mt-6 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                    <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-2">
+                  <div className="mt-6 p-4 bg-primary/5 rounded-2xl border border-primary/10">
+                    <p className="text-[10px] text-primary font-bold flex items-center gap-2">
                       <CheckCircle2 size={14} />
                       TERMOS ACEITOS EM: {profile.accepted_terms_at ? new Date(profile.accepted_terms_at).toLocaleString('pt-BR') : 'N/A'}
                     </p>
@@ -3840,7 +4429,7 @@ export default function App() {
             >
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <Download className="text-emerald-600" size={24} />
+                  <Download className="text-primary" size={24} />
                   Exportar Dados
                 </h3>
                 <button onClick={() => setIsExportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
@@ -3863,7 +4452,7 @@ export default function App() {
                         type="date" 
                         value={exportFilters.startDate}
                         onChange={(e) => setExportFilters({...exportFilters, startDate: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -3874,7 +4463,7 @@ export default function App() {
                         type="date" 
                         value={exportFilters.endDate}
                         onChange={(e) => setExportFilters({...exportFilters, endDate: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
@@ -3884,7 +4473,7 @@ export default function App() {
                     <select 
                       value={exportFilters.patientId}
                       onChange={(e) => setExportFilters({...exportFilters, patientId: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     >
                       <option value="all">Todos os Pacientes</option>
                       {patients.map(p => (
@@ -3899,7 +4488,7 @@ export default function App() {
                       <select 
                         value={exportFilters.category}
                         onChange={(e) => setExportFilters({...exportFilters, category: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         <option value="all">Receitas + Despesas</option>
                         <option value="income">Apenas Receitas</option>
@@ -3918,7 +4507,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={exportType === 'patients' ? exportPatients : exportFinance}
-                    className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="flex-1 bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
                     <Download size={20} />
                     Exportar Agora
@@ -3962,7 +4551,7 @@ export default function App() {
                       required
                       value={newAppointment.patient_id}
                       onChange={(e) => setNewAppointment({...newAppointment, patient_id: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     >
                       <option value="">Selecione um paciente</option>
                       {patients.map(p => (
@@ -3979,7 +4568,7 @@ export default function App() {
                         type="datetime-local" 
                         value={newAppointment.start_time}
                         onChange={(e) => setNewAppointment({...newAppointment, start_time: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -3989,20 +4578,22 @@ export default function App() {
                         type="datetime-local" 
                         value={newAppointment.end_time}
                         onChange={(e) => setNewAppointment({...newAppointment, end_time: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Observações</label>
-                    <textarea 
-                      rows={3}
-                      value={newAppointment.notes}
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Procedimento</label>
+                    <input
+                      type="text"
+                      value={newAppointment.notes || ''}
                       onChange={(e) => setNewAppointment({...newAppointment, notes: e.target.value})}
-                      placeholder="Ex: Paciente com dor aguda no molar..."
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                      placeholder="Ex: endo 11, canal 11, restauração 26"
+                      maxLength={80}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
+                    <p className="mt-1 text-xs text-slate-400">Foque em um procedimento curto (ex: endo 11).</p>
                   </div>
 
                   <div className="flex gap-4 pt-4">
@@ -4015,7 +4606,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Confirmar Agendamento
                     </button>
@@ -4059,7 +4650,7 @@ export default function App() {
                       type="text" 
                       value={newPatient.name}
                       onChange={(e) => setNewPatient({...newPatient, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
@@ -4070,7 +4661,7 @@ export default function App() {
                         type="text" 
                         value={newPatient.cpf}
                         onChange={(e) => setNewPatient({...newPatient, cpf: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -4079,7 +4670,7 @@ export default function App() {
                         type="date" 
                         value={newPatient.birth_date}
                         onChange={(e) => setNewPatient({...newPatient, birth_date: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
@@ -4092,7 +4683,7 @@ export default function App() {
                         type="text" 
                         value={newPatient.phone}
                         onChange={(e) => setNewPatient({...newPatient, phone: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -4101,7 +4692,7 @@ export default function App() {
                         type="email" 
                         value={newPatient.email}
                         onChange={(e) => setNewPatient({...newPatient, email: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
@@ -4112,7 +4703,7 @@ export default function App() {
                       type="text" 
                       value={newPatient.address}
                       onChange={(e) => setNewPatient({...newPatient, address: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
@@ -4126,7 +4717,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Cadastrar Paciente
                     </button>
@@ -4171,7 +4762,7 @@ export default function App() {
                       type="text" 
                       value={editingDentist.name}
                       onChange={(e) => setEditingDentist({...editingDentist, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
@@ -4181,7 +4772,7 @@ export default function App() {
                       type="email" 
                       value={editingDentist.email}
                       onChange={(e) => setEditingDentist({...editingDentist, email: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div className="flex gap-4 pt-4">
@@ -4194,7 +4785,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Salvar
                     </button>
@@ -4246,7 +4837,7 @@ export default function App() {
                         required
                         value={newPaymentPlan.patient_id}
                         onChange={(e) => setNewPaymentPlan({...newPaymentPlan, patient_id: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         <option value="">Selecione um paciente</option>
                         {patients.map(p => (
@@ -4264,7 +4855,7 @@ export default function App() {
                       placeholder="Ex: Tratamento de Canal, Implante..."
                       value={newPaymentPlan.procedure}
                       onChange={(e) => setNewPaymentPlan({...newPaymentPlan, procedure: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
@@ -4278,7 +4869,7 @@ export default function App() {
                         placeholder="0,00"
                         value={newPaymentPlan.total_amount}
                         onChange={(e) => setNewPaymentPlan({...newPaymentPlan, total_amount: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -4287,7 +4878,7 @@ export default function App() {
                         required
                         value={newPaymentPlan.installments_count}
                         onChange={(e) => setNewPaymentPlan({...newPaymentPlan, installments_count: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         {[1, 2, 3, 4, 5, 6, 10, 12, 18, 24].map(n => (
                           <option key={n} value={n}>{n}x</option>
@@ -4303,7 +4894,7 @@ export default function App() {
                       type="date" 
                       value={newPaymentPlan.first_due_date}
                       onChange={(e) => setNewPaymentPlan({...newPaymentPlan, first_due_date: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
@@ -4317,7 +4908,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Criar Plano
                     </button>
@@ -4349,7 +4940,7 @@ export default function App() {
               <div className="p-8 md:p-12 bg-white text-slate-800 font-serif">
                 <div className="flex justify-between items-start mb-12 no-print">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white">
+                    <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white">
                       <Plus size={24} strokeWidth={3} />
                     </div>
                     <h1 className="text-xl font-bold tracking-tight text-slate-800">OdontoHub</h1>
@@ -4438,7 +5029,7 @@ export default function App() {
                       type="text" 
                       value={newDentist.name}
                       onChange={(e) => setNewDentist({...newDentist, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
@@ -4448,7 +5039,7 @@ export default function App() {
                       type="email" 
                       value={newDentist.email}
                       onChange={(e) => setNewDentist({...newDentist, email: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
@@ -4458,7 +5049,7 @@ export default function App() {
                       type="password" 
                       value={newDentist.password}
                       onChange={(e) => setNewDentist({...newDentist, password: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div className="flex gap-4 pt-4">
@@ -4471,7 +5062,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Cadastrar
                     </button>
@@ -4522,7 +5113,7 @@ export default function App() {
                       />
                       <label 
                         htmlFor="file-upload"
-                        className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/50 transition-all group overflow-hidden"
+                        className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-primary hover:bg-primary/5 transition-all group overflow-hidden"
                       >
                         {newImage.url ? (
                           <div className="relative w-full h-full p-2">
@@ -4532,7 +5123,7 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center gap-2 text-slate-400 group-hover:text-emerald-600">
+                          <div className="flex flex-col items-center gap-2 text-slate-400 group-hover:text-primary">
                             <Upload size={32} />
                             <span className="text-xs font-bold uppercase">Clique para selecionar arquivo</span>
                             <span className="text-[10px] text-slate-400">PNG, JPG ou GIF</span>
@@ -4549,7 +5140,7 @@ export default function App() {
                       placeholder="Ex: RX Panorâmico"
                       value={newImage.description}
                       onChange={(e) => setNewImage({...newImage, description: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div className="flex gap-4 pt-4">
@@ -4562,7 +5153,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Salvar
                     </button>
@@ -4614,7 +5205,7 @@ export default function App() {
                         placeholder={transactionType === 'INCOME' ? 'Ex: Limpeza - João Silva' : 'Ex: Aluguel'}
                         value={newTransaction.description}
                         onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -4622,7 +5213,7 @@ export default function App() {
                       <select 
                         value={newTransaction.category}
                         onChange={(e) => setNewTransaction({...newTransaction, category: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         {transactionType === 'INCOME' ? (
                           <>
@@ -4652,7 +5243,7 @@ export default function App() {
                         placeholder="0,00"
                         value={newTransaction.amount}
                         onChange={(e) => setNewTransaction({...newTransaction, amount: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none font-bold"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold"
                       />
                     </div>
                     <div>
@@ -4662,7 +5253,7 @@ export default function App() {
                         type="date" 
                         value={newTransaction.date}
                         onChange={(e) => setNewTransaction({...newTransaction, date: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -4670,7 +5261,7 @@ export default function App() {
                       <select 
                         value={newTransaction.payment_method}
                         onChange={(e) => setNewTransaction({...newTransaction, payment_method: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         <option value="Dinheiro">Dinheiro</option>
                         <option value="PIX">PIX</option>
@@ -4687,7 +5278,7 @@ export default function App() {
                           <select 
                             value={newTransaction.patient_id}
                             onChange={(e) => setNewTransaction({...newTransaction, patient_id: e.target.value})}
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                           >
                             <option value="">Selecione um paciente</option>
                             {patients.map(p => (
@@ -4702,7 +5293,7 @@ export default function App() {
                             placeholder="Ex: Limpeza, Canal..."
                             value={newTransaction.procedure}
                             onChange={(e) => setNewTransaction({...newTransaction, procedure: e.target.value})}
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                           />
                         </div>
                       </>
@@ -4711,9 +5302,9 @@ export default function App() {
                       <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Observações</label>
                       <textarea 
                         rows={2}
-                        value={newTransaction.notes}
+                        value={newTransaction.notes || ''}
                         onChange={(e) => setNewTransaction({...newTransaction, notes: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                       />
                     </div>
                   </div>
@@ -4727,9 +5318,9 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl transition-all active:scale-95 ${
+                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
                         transactionType === 'INCOME' 
-                          ? 'bg-emerald-600 shadow-emerald-100 hover:bg-emerald-700' 
+                          ? 'bg-primary shadow-primary/10 hover:opacity-90' 
                           : 'bg-rose-600 shadow-rose-100 hover:bg-rose-700'
                       }`}
                     >
@@ -4753,9 +5344,9 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-emerald-50/50">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-primary/5">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600">
+                  <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
                     <DollarSign size={20} />
                   </div>
                   <div>
@@ -4787,7 +5378,7 @@ export default function App() {
                   </div>
                   <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
                     <span className="text-sm font-bold text-slate-800">Valor</span>
-                    <span className="text-lg font-bold text-emerald-600">
+                    <span className="text-lg font-bold text-primary">
                       {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(selectedInstallment.amount)}
                     </span>
                   </div>
@@ -4802,7 +5393,7 @@ export default function App() {
                         onClick={() => setPaymentMethod(method)}
                         className={`p-3 rounded-xl border text-sm font-medium transition-all ${
                           paymentMethod === method
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700 shadow-sm'
+                            ? 'bg-primary/5 border-primary/20 text-primary shadow-sm'
                             : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                         }`}
                       >
@@ -4821,7 +5412,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => handlePayInstallment(selectedInstallment.id, paymentMethod)}
-                    className="flex-1 py-3 px-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-emerald-200 active:scale-95"
+                    className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl hover:opacity-90 transition-all shadow-[0_12px_36px_rgba(38,78,54,0.12)] active:scale-95"
                   >
                     Confirmar
                   </button>
@@ -4888,7 +5479,7 @@ export default function App() {
                             <td className="py-4">
                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                                 inst.status === 'PAID'
-                                  ? 'bg-emerald-100 text-emerald-700'
+                                  ? 'bg-primary/10 text-primary'
                                   : isOverdue(inst.due_date)
                                     ? 'bg-rose-100 text-rose-700'
                                     : 'bg-amber-100 text-amber-700'
@@ -4904,7 +5495,7 @@ export default function App() {
                                       setSelectedInstallment(inst);
                                       setIsReceiveInstallmentModalOpen(true);
                                     }}
-                                    className="text-emerald-600 hover:text-emerald-700 font-bold text-xs bg-emerald-50 px-3 py-1.5 rounded-lg transition-colors"
+                                    className="text-primary hover:opacity-80 font-bold text-xs bg-primary/10 px-3 py-1.5 rounded-lg transition-colors"
                                   >
                                   Receber
                                 </button>
@@ -4922,6 +5513,18 @@ export default function App() {
       </AnimatePresence>
 
       {/* Notifications */}
+      {/* Primary Action & Mobile Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 tablet-l:hidden no-print">
+        {/* Bottom Navigation */}
+        <nav className="bg-white/80 backdrop-blur-xl border-t border-[#C6C6C8]/30 px-2 pt-2 pb-6 flex justify-around items-center">
+          <BottomNavItem id="dashboard" label="Início" icon={ClipboardList} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
+          <BottomNavItem id="agenda" label="Agenda" icon={Calendar} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
+          <BottomNavItem id="pacientes" label="Pacientes" icon={Users} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
+          <BottomNavItem id="financeiro" label="Financeiro" icon={DollarSign} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
+          <BottomNavItem id="configuracoes" label="Mais" icon={Settings} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
+        </nav>
+      </div>
+
       <AnimatePresence>
         {notification && (
           <motion.div 
@@ -4930,7 +5533,7 @@ export default function App() {
             exit={{ opacity: 0, y: 50 }}
             className={`fixed bottom-8 right-8 z-[100] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 border ${
               notification.type === 'success' 
-                ? 'bg-emerald-600 border-emerald-500 text-white' 
+                ? 'bg-primary border-primary/20 text-white' 
                 : 'bg-rose-600 border-rose-500 text-white'
             }`}
           >
@@ -4969,7 +5572,7 @@ export default function App() {
                     confirmation.onConfirm();
                     setConfirmation(null);
                   }}
-                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-rose-600/20 transition-all"
+                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-lg shadow-rose-600/20 transition-all"
                 >
                   Confirmar
                 </button>
@@ -4978,37 +5581,6 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
-
-      {/* Bottom Navigation - Mobile Only */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 tablet-l:hidden z-40 no-print">
-        <div className="flex items-center justify-around h-16">
-          {[
-            { id: 'dashboard' as const, icon: ClipboardList, label: 'Início' },
-            { id: 'agenda' as const, icon: Calendar, label: 'Agenda' },
-            { id: 'pacientes' as const, icon: Users, label: 'Pacientes' },
-            { id: 'financeiro' as const, icon: DollarSign, label: 'Financeiro' },
-            { id: 'configuracoes' as const, icon: Settings, label: 'Mais' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setActiveTab(item.id);
-              }}
-              className={`flex flex-col items-center justify-center w-full h-16 transition-colors ${
-                activeTab === item.id
-                  ? 'text-emerald-600'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <item.icon size={24} />
-              <span className="text-[10px] font-medium mt-1">{item.label}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
-
-      {/* Main Content Padding for Mobile Bottom Nav */}
-      <div className="h-16 tablet-l:hidden" />
     </div>
         )
       } />
@@ -5055,7 +5627,7 @@ function ForgotPassword() {
       >
         <div className="p-8 md:p-12">
           <div className="flex justify-center mb-8">
-            <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-emerald-200">
+            <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-white shadow-xl shadow-primary/20">
               <Plus size={32} strokeWidth={3} />
             </div>
           </div>
@@ -5075,7 +5647,7 @@ function ForgotPassword() {
                   placeholder="exemplo@clinica.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                 />
               </div>
             </div>
@@ -5088,7 +5660,7 @@ function ForgotPassword() {
             )}
 
             {message && (
-              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-600 text-sm">
+              <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-3 text-primary text-sm">
                 <CheckCircle2 size={18} />
                 {message}
               </div>
@@ -5097,14 +5669,14 @@ function ForgotPassword() {
             <button 
               type="submit"
               disabled={loading}
-              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
+              className="w-full bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-50"
             >
               {loading ? 'Enviando...' : 'Enviar Instruções'}
             </button>
           </form>
 
           <div className="mt-8 text-center">
-            <Link to="/" className="text-xs text-emerald-600 font-bold hover:underline">
+            <Link to="/" className="text-xs text-primary font-bold hover:underline">
               Voltar para o login
             </Link>
           </div>
@@ -5161,7 +5733,7 @@ function ResetPassword() {
           <AlertTriangle className="mx-auto text-rose-500 mb-4" size={48} />
           <h1 className="text-2xl font-bold mb-2">Link Inválido</h1>
           <p className="text-slate-500 mb-6">Este link de recuperação de senha é inválido ou expirou.</p>
-          <Link to="/" className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold inline-block">
+          <Link to="/" className="bg-primary text-white px-6 py-3 rounded-xl font-bold inline-block">
             Voltar para o login
           </Link>
         </div>
@@ -5178,7 +5750,7 @@ function ResetPassword() {
       >
         <div className="p-8 md:p-12">
           <div className="flex justify-center mb-8">
-            <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-emerald-200">
+            <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-white shadow-xl shadow-primary/20">
               <Lock size={32} strokeWidth={3} />
             </div>
           </div>
@@ -5198,7 +5770,7 @@ function ResetPassword() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                 />
               </div>
             </div>
@@ -5213,7 +5785,7 @@ function ResetPassword() {
                   placeholder="••••••••"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                 />
               </div>
             </div>
@@ -5226,7 +5798,7 @@ function ResetPassword() {
             )}
 
             {message && (
-              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-600 text-sm">
+              <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-3 text-primary text-sm">
                 <CheckCircle2 size={18} />
                 {message}
               </div>
@@ -5235,7 +5807,7 @@ function ResetPassword() {
             <button 
               type="submit"
               disabled={loading || success}
-              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
+              className="w-full bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-50"
             >
               {loading ? 'Processando...' : 'Redefinir Senha'}
             </button>
@@ -5275,7 +5847,7 @@ function PrintLayout({ children, title, onPrint }: { children: React.ReactNode, 
             </button>
             <button 
               onClick={onPrint}
-              className="print-btn flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-emerald-100"
+              className="print-btn flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-xl font-bold hover:opacity-90 transition-all shadow-[0_12px_36px_rgba(38,78,54,0.12)]"
             >
               <Printer size={20} />
               Imprimir Agora
@@ -5364,7 +5936,7 @@ function PrintReceipt({ transaction, installment, profile, patients, paymentPlan
       <div className="p-12 bg-white text-slate-800 font-serif border border-slate-200">
         <div className="flex justify-between items-start mb-16">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-emerald-600 rounded-xl flex items-center justify-center text-white">
+            <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-white">
               <Plus size={28} strokeWidth={3} />
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-800">OdontoHub</h1>
@@ -5431,7 +6003,7 @@ function PrintReport({ profile, transactions, patients, appointments }: any) {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <span className="text-slate-500 font-medium">Total de Entradas</span>
-                <span className="text-2xl font-black text-emerald-600">
+                <span className="text-2xl font-black text-primary">
                   {summary.totalIncome.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                 </span>
               </div>
@@ -5443,7 +6015,7 @@ function PrintReport({ profile, transactions, patients, appointments }: any) {
               </div>
               <div className="flex justify-between items-center pt-4 border-t-2 border-slate-900">
                 <span className="text-lg font-black text-slate-900 uppercase">Saldo Final</span>
-                <span className={`text-3xl font-black ${(summary.totalIncome - summary.totalExpense) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                <span className={`text-3xl font-black ${(summary.totalIncome - summary.totalExpense) >= 0 ? 'text-primary' : 'text-rose-600'}`}>
                   {(summary.totalIncome - summary.totalExpense).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                 </span>
               </div>
@@ -5482,11 +6054,11 @@ function PrintReport({ profile, transactions, patients, appointments }: any) {
                   <td className="py-4 font-medium">{new Date(t.date).toLocaleDateString('pt-BR')}</td>
                   <td className="py-4 font-bold text-slate-900">{t.description}</td>
                   <td className="py-4">
-                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${t.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${t.type === 'INCOME' ? 'bg-primary/5 text-primary' : 'bg-rose-50 text-rose-600'}`}>
                       {t.type === 'INCOME' ? 'Entrada' : 'Saída'}
                     </span>
                   </td>
-                  <td className={`py-4 font-black text-right ${t.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  <td className={`py-4 font-black text-right ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
                     {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </td>
                 </tr>
@@ -5580,8 +6152,8 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
     <PrintLayout title={type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Documento'} onPrint={() => window.print()}>
       <div className="bg-white p-[1cm] font-serif text-slate-900">
         {/* Header */}
-        <div className="text-center border-b-2 border-emerald-600 pb-6 mb-10">
-          <h1 className="text-3xl font-bold text-emerald-800 uppercase tracking-widest">
+        <div className="text-center border-b-2 border-primary/20 pb-6 mb-10">
+          <h1 className="text-3xl font-bold text-primary uppercase tracking-widest">
             {profile?.clinic_name || 'Clínica Odontológica'}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
@@ -5595,7 +6167,7 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
         {/* Content */}
         <div className="space-y-8 min-h-[15cm]">
           <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold uppercase underline decoration-emerald-600 underline-offset-8">
+            <h2 className="text-2xl font-bold uppercase underline decoration-primary/40 underline-offset-8">
               {type === 'receituario' ? 'Receituário' : 
                type === 'declaracao' ? 'Declaração' : 
                type === 'atestado' ? 'Atestado' : 
@@ -5611,9 +6183,9 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
 
             {type === 'receituario' && (
               <div className="mt-10 space-y-8">
-                <p className="font-bold text-xl mb-4 text-emerald-800">Uso Interno:</p>
+                <p className="font-bold text-xl mb-4 text-primary">Uso Interno:</p>
                 {content.items?.map((item: any, i: number) => (
-                  <div key={i} className="border-l-4 border-emerald-600 pl-4 mb-6">
+                  <div key={i} className="border-l-4 border-primary/40 pl-4 mb-6">
                     <p className="font-bold text-lg">{item.medication}</p>
                     <p className="text-slate-700 italic">{item.dosage}</p>
                   </div>
@@ -5668,7 +6240,7 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
                 
                 <div className="space-y-6">
                   <div className="space-y-4">
-                    <h4 className="font-bold border-b-2 border-emerald-600 pb-1 text-emerald-800 uppercase tracking-wider">Histórico Clínico (Anamnese)</h4>
+                    <h4 className="font-bold border-b-2 border-primary/40 pb-1 text-primary uppercase tracking-wider">Histórico Clínico (Anamnese)</h4>
                     <div className="grid grid-cols-1 gap-4 text-sm">
                       <div>
                         <p className="font-bold text-slate-500 text-[10px] uppercase">Histórico Médico:</p>
@@ -5686,13 +6258,13 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
                   </div>
 
                   <div className="space-y-4">
-                    <h4 className="font-bold border-b-2 border-emerald-600 pb-1 text-emerald-800 uppercase tracking-wider">Histórico de Atendimentos (Evolução)</h4>
+                    <h4 className="font-bold border-b-2 border-primary/40 pb-1 text-primary uppercase tracking-wider">Histórico de Atendimentos (Evolução)</h4>
                     {patient?.evolution && patient.evolution.length > 0 ? (
                       <div className="space-y-4">
                         {patient.evolution.map((evo: any, i: number) => (
                           <div key={i} className="border-b border-slate-100 pb-3">
                             <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-bold text-emerald-700">{new Date(evo.date).toLocaleDateString('pt-BR')}</span>
+                              <span className="text-xs font-bold text-primary">{new Date(evo.date).toLocaleDateString('pt-BR')}</span>
                               <span className="text-xs font-bold text-slate-400 uppercase">{evo.procedure_performed}</span>
                             </div>
                             <p className="text-sm text-slate-600 italic">{evo.notes}</p>
@@ -5711,9 +6283,9 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
               <div className="mt-10 space-y-6">
                 <table className="w-full border-collapse">
                   <thead>
-                    <tr className="bg-emerald-50 text-emerald-800">
-                      <th className="border border-emerald-100 p-3 text-left">Procedimento</th>
-                      <th className="border border-emerald-100 p-3 text-right">Valor</th>
+                    <tr className="bg-primary/5 text-primary">
+                      <th className="border border-primary/10 p-3 text-left">Procedimento</th>
+                      <th className="border border-primary/10 p-3 text-right">Valor</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5729,7 +6301,7 @@ function PrintDocument({ profile, patients, apiFetch, appointments, transactions
                   <tfoot>
                     <tr className="font-bold bg-slate-50">
                       <td className="border border-slate-100 p-3 text-right">Total</td>
-                      <td className="border border-slate-100 p-3 text-right text-emerald-700">
+                      <td className="border border-slate-100 p-3 text-right text-primary">
                         {content.items?.reduce((acc: number, item: any) => acc + Number(item.value), 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                       </td>
                     </tr>
