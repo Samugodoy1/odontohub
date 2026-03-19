@@ -7,6 +7,15 @@
   --breakpoint-desktop: 1200px;
 }
 
+@layer base {
+  body {
+    @apply font-sans;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
 @layer utilities {
   @media print {
     /* Force colors and backgrounds */

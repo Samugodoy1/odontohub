@@ -398,7 +398,7 @@ export function Documents({ patients, profile, apiFetch, imprimirDocumento }: Do
             <button
               key={doc.id}
               onClick={() => setSelectedDoc(doc.id as DocType)}
-              className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md hover:border-emerald-200 transition-all text-left group"
+              className="bg-white p-6 rounded-3xl border border-slate-100 hover:border-emerald-200 transition-all text-left group"
             >
               <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <doc.icon size={28} />
@@ -409,7 +409,7 @@ export function Documents({ patients, profile, apiFetch, imprimirDocumento }: Do
           ))}
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <button 
               onClick={() => setSelectedDoc(null)}

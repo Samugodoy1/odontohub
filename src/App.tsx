@@ -1257,10 +1257,10 @@ export default function App() {
         setActiveTab(id);
         setIsSidebarOpen(false);
       }}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+      className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${
         activeTab === id 
-          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200' 
-          : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+          ? 'bg-slate-100 text-emerald-600' 
+          : 'text-slate-600 hover:bg-slate-50'
       }`}
     >
       <Icon size={20} className="shrink-0" />
@@ -1450,7 +1450,7 @@ export default function App() {
 
                   <button 
                     type="submit"
-                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98]"
+                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98]"
                   >
                     {isRegistering ? 'Criar Conta' : 'Entrar no Sistema'}
                   </button>
@@ -1502,7 +1502,7 @@ export default function App() {
       `}>
         <div className="flex items-center justify-between mb-10 px-2">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-200 shrink-0">
+            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shrink-0">
               <Plus size={24} strokeWidth={3} />
             </div>
             <h1 className="text-xl font-bold tracking-tight text-slate-800 whitespace-nowrap tablet-l:hidden desktop:block">OdontoHub</h1>
@@ -1562,7 +1562,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full max-w-full print:p-0">
+      <main className="flex-1 p-4 md:p-6 lg:p-8 pb-20 md:pb-8 overflow-y-auto w-full max-w-full print:p-0 print:pb-0">
         <header className="w-full max-w-screen-xl mx-auto px-0 md:px-4 flex flex-col desktop:flex-row desktop:justify-between desktop:items-center gap-6 mb-8 md:mb-10 no-print">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1612,7 +1612,7 @@ export default function App() {
             </div>
             <button 
               onClick={() => setIsPatientModalOpen(true)}
-              className="flex bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-semibold items-center justify-center gap-2 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 active:scale-95 w-full sm:w-auto"
+              className="flex bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-semibold items-center justify-center gap-2 hover:bg-emerald-700 transition-all active:scale-95 w-full sm:w-auto"
             >
               <Plus size={20} />
               Novo Paciente
@@ -1684,195 +1684,136 @@ export default function App() {
             )}
 
             {activeTab === 'dashboard' && !searchTerm && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-                {/* Stats */}
-                <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                  {[
-                    { 
-                      label: 'Pacientes Ativos', 
-                      value: patients.length, 
-                      icon: Users, 
-                      color: 'text-blue-600', 
-                      bg: 'bg-blue-50',
-                      action: () => setActiveTab('pacientes')
-                    },
-                    { 
-                      label: 'Consultas Hoje', 
-                      value: appointments.filter(a => new Date(a.start_time).toDateString() === new Date().toDateString()).length, 
-                      icon: Calendar, 
-                      color: 'text-emerald-600', 
-                      bg: 'bg-emerald-50',
-                      action: () => {
-                        setActiveTab('agenda');
-                        setAgendaViewMode('day');
-                        setSelectedDate(new Date());
-                      }
-                    },
-                    { 
-                      label: 'Consultas da Semana', 
-                      value: weeklyAppointmentsCount, 
-                      icon: Clock, 
-                      color: 'text-amber-600', 
-                      bg: 'bg-amber-50',
-                      action: () => {
-                        setActiveTab('agenda');
-                        setAgendaViewMode('week');
-                        setSelectedDate(new Date());
-                      }
-                    },
-                    { 
-                      label: 'Receita do Mês', 
-                      value: monthlyRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), 
-                      icon: DollarSign, 
-                      color: 'text-indigo-600', 
-                      bg: 'bg-indigo-50',
-                      variation: revenueVariation,
-                      action: () => {
-                        setActiveTab('financeiro');
-                        setFinanceSubTab('transacoes');
-                        setFinanceFilter(prev => ({ ...prev, period: 'month', type: 'INCOME' }));
-                      }
-                    },
-                  ].map((stat, i) => (
-                    <motion.div 
-                      key={i} 
-                      whileHover={{ y: -4, boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)" }}
-                      transition={{ duration: 0.2 }}
-                      onClick={stat.action}
-                      className="bg-white p-5 md:p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 md:block cursor-pointer group"
-                    >
-                      <div className={`w-12 h-12 shrink-0 ${stat.bg} ${stat.color} rounded-xl flex items-center justify-center md:mb-4 group-hover:scale-110 transition-transform`}>
-                        <stat.icon size={24} />
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs md:text-sm font-medium group-hover:text-slate-700 transition-colors">{stat.label}</p>
-                        <p className="text-xl md:text-2xl font-bold text-slate-900 md:mt-1">{stat.value}</p>
-                        {stat.variation !== undefined && stat.variation !== 0 && (
-                          <p className={`text-[10px] font-bold mt-1 ${stat.variation >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                            {stat.variation >= 0 ? '+' : ''}{stat.variation.toFixed(1)}% em relação ao mês anterior
-                          </p>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-
-                {/* Next Appointments */}
-                <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-                  <div className="p-4 md:p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
-                    <h3 className="font-bold text-sm md:text-base text-slate-800">
-                      Próximas Consultas {nextAppointments.length > 0 && `(${nextAppointments.length})`}
-                      {todayAppointmentsCount > 0 && <span className="ml-2 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">Hoje: {todayAppointmentsCount}</span>}
-                    </h3>
-                    <button 
-                      onClick={() => setActiveTab('agenda')}
-                      className="text-emerald-600 text-[10px] md:text-xs font-bold hover:underline flex items-center gap-1"
-                    >
-                      Agenda Completa
-                      <ChevronRight size={14} />
-                    </button>
+              <div className="max-w-3xl mx-auto">
+                {/* Próximas Consultas - Clean List Style */}
+                <div className="bg-white">
+                  <div className="px-6 py-4 border-b border-slate-200">
+                    <h2 className="text-lg font-semibold text-slate-900">Próximas Consultas</h2>
                   </div>
-                  <div className="divide-y divide-slate-50 overflow-y-auto max-h-[400px]">
-                    {nextAppointments.length > 0 ? nextAppointments.map((app) => (
-                      <div 
-                        key={app.id} 
-                        onClick={() => openPatientRecord(app.patient_id)}
-                        className="p-3 md:p-4 flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 shrink-0 group-hover:bg-emerald-50 group-hover:text-emerald-600 transition-colors overflow-hidden border border-slate-200">
-                            {(() => {
-                              const patient = patients.find(p => p.id === app.patient_id);
-                              return patient?.photo_url ? (
-                                <img src={patient.photo_url} alt={app.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                              ) : (
-                                <UserCircle size={24} />
-                              );
-                            })()}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-bold text-slate-800 text-sm truncate leading-tight">{app.patient_name}</p>
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                              <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                                <Calendar size={10} />
-                                {new Date(app.start_time).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                              </p>
-                              <span className="text-slate-300 text-[10px]">•</span>
-                              <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                                <Clock size={10} />
-                                {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                              </p>
+
+                  {nextAppointments.length > 0 ? (
+                    <div>
+                      {nextAppointments.map((app, idx) => {
+                        const appDate = new Date(app.start_time);
+                        const today = new Date();
+                        const tomorrow = new Date(today);
+                        tomorrow.setDate(today.getDate() + 1);
+                        const isToday = appDate.toDateString() === today.toDateString();
+                        const isTomorrow = appDate.toDateString() === tomorrow.toDateString();
+                        
+                        return (
+                        <div 
+                          key={app.id} 
+                          className="px-6 py-5 flex items-center justify-between border-b border-slate-200 last:border-b-0"
+                        >
+                          {/* Patient Info */}
+                          <div className="flex items-center gap-4 flex-1">
+                            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600 font-medium">
+                              {idx + 1}
                             </div>
-                            <p className="text-[9px] text-slate-400 mt-0.5 italic truncate">Procedimento não especificado</p>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-semibold text-slate-900 text-base">{app.patient_name}</p>
+                                {isToday && (
+                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-xs font-medium rounded">
+                                    Hoje
+                                  </span>
+                                )}
+                                {isTomorrow && (
+                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-xs font-medium rounded">
+                                    Amanhã
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Clock size={14} className="text-slate-400" />
+                                <p className="text-sm text-slate-600">
+                                  {appDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                                <span className="text-slate-300">•</span>
+                                <p className="text-sm text-slate-600">
+                                  {appDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                                </p>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <StatusBadge status={app.status} />
-                          <ChevronRight size={14} className="text-slate-300 group-hover:text-emerald-600 transition-colors" />
-                        </div>
-                      </div>
-                    )) : (
-                      <div className="p-8 text-center">
-                        <Calendar className="mx-auto text-slate-200 mb-3" size={32} />
-                        <p className="text-slate-500 text-xs">Nenhuma consulta futura agendada.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
 
-                {/* Quick Actions / Alerts / Daily Revenue */}
-                <div className="space-y-6">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-center relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                      <DollarSign size={80} className="text-emerald-600" />
+                          {/* Action Button */}
+                          <button 
+                            onClick={() => {
+                              setSelectedPatient(appointments.find(a => a.id === app.id) as any);
+                            }}
+                            className="px-3 py-2 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 transition-colors text-sm"
+                          >
+                            Atender
+                          </button>
+                        </div>
+                        );
+                      })}
                     </div>
-                    <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Faturamento Hoje</p>
-                    <h3 className="text-2xl md:text-3xl font-black text-slate-900 mt-1">
-                      {dailyRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-2">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <p className="text-[10px] font-bold text-emerald-600 uppercase">Atualizado em tempo real</p>
-                    </div>
-                  </div>
-
-                  <div className="bg-emerald-900 text-white p-6 rounded-2xl shadow-lg shadow-emerald-200 relative overflow-hidden">
-                    <div className="relative z-10">
-                      <h3 className="font-bold text-lg mb-2">Dica do Dia</h3>
-                      <p className="text-emerald-100 text-sm leading-relaxed">
-                        Lembre-se de confirmar as consultas de amanhã via WhatsApp para reduzir faltas em até 30%.
-                      </p>
-                      <button 
+                  ) : (
+                    <div className="px-6 py-16 text-center">
+                      <Calendar className="mx-auto text-slate-300 mb-4" size={40} />
+                      <p className="text-slate-500 text-base">Nenhuma consulta agendada</p>
+                      <button
                         onClick={() => setActiveTab('agenda')}
-                        className="mt-4 bg-white text-emerald-900 px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-50 transition-colors"
+                        className="mt-4 text-emerald-600 font-medium hover:text-emerald-700 transition-colors"
                       >
-                        Enviar Lembretes
+                        Agendar consulta
                       </button>
                     </div>
-                    <div className="absolute -right-4 -bottom-4 text-emerald-800/50 rotate-12">
-                      <AlertCircle size={120} />
-                    </div>
-                  </div>
+                  )}
+                </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                    <h3 className="font-bold text-lg mb-4">Ações Rápidas</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { label: 'Novo Prontuário', icon: ClipboardList, action: () => setActiveTab('pacientes') },
-                        { label: 'Bloquear Horário', icon: Clock, action: () => setActiveTab('agenda') },
-                        { label: 'Relatório Mensal', icon: DollarSign, action: () => setActiveTab('financeiro') },
-                        { label: 'Configurações', icon: Settings, action: () => setActiveTab('configuracoes') },
-                      ].map((action, i) => (
-                        <button 
-                          key={i} 
-                          onClick={action.action}
-                          className="flex flex-col items-center justify-center p-4 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50 transition-all group"
-                        >
-                          <action.icon size={20} className="text-slate-400 group-hover:text-emerald-600 mb-2" />
-                          <span className="text-xs font-bold text-slate-600 group-hover:text-emerald-900 text-center">{action.label}</span>
-                        </button>
-                      ))}
+                {/* Metrics Cards - Secondary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
+                  {/* Consultas Hoje */}
+                  <button 
+                    onClick={() => {
+                      setActiveTab('agenda');
+                      setAgendaViewMode('day');
+                      setSelectedDate(new Date());
+                    }}
+                    className="bg-white p-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors cursor-pointer text-left"
+                  >
+                    <p className="text-xs text-slate-500 font-medium mb-1">Consultas Hoje</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-lg font-semibold text-slate-900">
+                        {appointments.filter(a => new Date(a.start_time).toDateString() === new Date().toDateString()).length}
+                      </p>
+                      <Calendar size={16} className="text-slate-400" />
                     </div>
+                  </button>
+
+                  {/* Faturamento Hoje */}
+                  <button 
+                    onClick={() => {
+                      setActiveTab('financeiro');
+                      setFinanceSubTab('transacoes');
+                      setFinanceFilter(prev => ({ ...prev, period: 'day', type: 'INCOME' }));
+                    }}
+                    className="bg-white p-3 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors cursor-pointer text-left"
+                  >
+                    <p className="text-xs text-slate-500 font-medium mb-1">Faturamento Hoje</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-lg font-semibold text-slate-900">
+                        {dailyRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </p>
+                      <DollarSign size={16} className="text-slate-400" />
+                    </div>
+                  </button>
+                </div>
+
+                {/* Reminder Section */}
+                <div className="mt-6 bg-white border border-emerald-200 rounded-xl">
+                  <div className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center">
+                        <CheckCircle2 size={12} className="text-emerald-600" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-slate-900">Lembrete</h3>
+                    </div>
+                    <p className="text-sm text-slate-600">Verifique se todos os pacientes confirmaram suas consultas para hoje.</p>
                   </div>
                 </div>
               </div>
@@ -1882,8 +1823,8 @@ export default function App() {
               <div className="flex flex-col desktop:grid desktop:grid-cols-4 gap-6 md:gap-8">
                 {/* Mini Calendar / Filters */}
                 <div className="space-y-6 order-1 desktop:order-1 no-print">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                    <h3 className="font-bold mb-4 text-slate-800">Filtros da Agenda</h3>
+                  <div className="bg-white p-6 border-b border-slate-200">
+                    <h3 className="font-semibold mb-4 text-slate-900">Filtros da Agenda</h3>
                     <div className="space-y-4 tablet-p:grid tablet-p:grid-cols-3 tablet-p:gap-6 tablet-p:space-y-0 desktop:flex desktop:flex-col desktop:space-y-4">
                       <div>
                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Buscar Paciente</label>
@@ -1913,7 +1854,7 @@ export default function App() {
                       <div className="tablet-p:pt-6 desktop:pt-4 desktop:border-t desktop:border-slate-50 space-y-3">
                         <button 
                           onClick={openAppointmentModal}
-                          className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                          className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
                         >
                           <Plus size={18} />
                           Novo Agendamento
@@ -1922,8 +1863,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                    <h3 className="font-bold mb-4 text-slate-800">Status</h3>
+                  <div className="bg-white p-6">
+                    <h3 className="font-semibold mb-4 text-slate-900">Status</h3>
                     <div className="space-y-2 tablet-p:grid tablet-p:grid-cols-3 tablet-p:gap-4 tablet-p:space-y-0 desktop:flex desktop:flex-col desktop:space-y-2">
                       {[
                         { id: 'SCHEDULED', label: 'Agendado', color: 'bg-blue-400' },
@@ -1955,8 +1896,8 @@ export default function App() {
 
                 {/* Timeline View */}
                 <div className="desktop:col-span-3 space-y-4 order-2 desktop:order-2">
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden no-print">
-                    <div className="p-4 md:p-6 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div className="bg-white border-b border-slate-200 overflow-hidden no-print">
+                    <div className="p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                       <div className="flex flex-wrap items-center gap-3 md:gap-4">
                         <div className="flex items-center gap-2">
                           <button 
@@ -2049,19 +1990,19 @@ export default function App() {
                       <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto">
                         <button 
                           onClick={() => setAgendaViewMode('day')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'day' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'day' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
                         >
                           Dia
                         </button>
                         <button 
                           onClick={() => setAgendaViewMode('week')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'week' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'week' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
                         >
                           Semana
                         </button>
                         <button 
                           onClick={() => setAgendaViewMode('month')}
-                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'month' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+                          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${agendaViewMode === 'month' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
                         >
                           Mês
                         </button>
@@ -2104,7 +2045,7 @@ export default function App() {
                                 onClick={() => setSelectedWeekDay(day.value)}
                                 className={`flex flex-col items-center justify-center min-w-[60px] tablet-l:min-w-0 tablet-l:flex-1 py-2 px-2 rounded-xl transition-all ${
                                   selectedWeekDay === day.value
-                                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100'
+                                    ? 'bg-emerald-600 text-white'
                                     : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-100'
                                 }`}
                               >
@@ -2172,7 +2113,7 @@ export default function App() {
                                     onClick={() => setSelectedDate(date)}
                                     className={`relative flex flex-col items-center justify-center aspect-square rounded-xl transition-all ${
                                       !d.currentMonth ? 'text-slate-300 opacity-40' : 
-                                      isSelected ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100' :
+                                      isSelected ? 'bg-emerald-600 text-white' :
                                       isToday ? 'bg-emerald-50 text-emerald-600 font-bold border border-emerald-100' :
                                       'hover:bg-slate-100 text-slate-600'
                                     }`}
@@ -2264,7 +2205,7 @@ export default function App() {
                               </p>
                             </div>
                             
-                            <div className="flex-1 bg-white border border-slate-100 p-4 tablet-l:p-6 rounded-2xl shadow-sm group-hover:border-emerald-200 group-hover:shadow-md transition-all flex flex-col tablet-l:flex-row justify-between items-start tablet-l:items-center gap-4">
+                            <div className="flex-1 bg-white border border-slate-100 p-4 tablet-l:p-6 rounded-2xl group-hover:border-emerald-200 transition-all flex flex-col tablet-l:flex-row justify-between items-start tablet-l:items-center gap-4">
                               <div 
                                 className="flex items-start tablet-l:items-center gap-4 tablet-l:gap-5 cursor-pointer w-full"
                                 onClick={() => openPatientRecord(app.patient_id)}
@@ -2461,7 +2402,7 @@ export default function App() {
                     </button>
                     <button 
                       onClick={() => setIsPatientModalOpen(true)}
-                      className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
+                      className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
                     >
                       <Plus size={18} />
                       Novo Paciente
@@ -2600,7 +2541,7 @@ export default function App() {
                               <UserCircle size={48} />
                             )}
                           </div>
-                          <label className="absolute -bottom-2 -right-2 p-2 bg-emerald-600 text-white rounded-xl shadow-lg cursor-pointer hover:bg-emerald-700 transition-all">
+                          <label className="absolute -bottom-2 -right-2 p-2 bg-emerald-600 text-white rounded-xl cursor-pointer hover:bg-emerald-700 transition-all">
                             <Camera size={16} />
                             <input 
                               type="file" 
@@ -3117,7 +3058,7 @@ export default function App() {
                             setTransactionType('INCOME');
                             setIsTransactionModalOpen(true);
                           }}
-                          className="flex-1 sm:flex-none bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                          className="flex-1 sm:flex-none bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                         >
                           <Plus size={18} />
                           Receita
@@ -3522,7 +3463,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => setIsDentistModalOpen(true)}
-                      className="w-full sm:w-auto bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100"
+                      className="w-full sm:w-auto bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-emerald-100"
                     >
                       <UserPlus size={20} />
                       Adicionar Dentista
@@ -3705,14 +3646,14 @@ export default function App() {
                 <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
                   <div className="flex flex-col items-center mb-10">
                     <div className="relative group">
-                      <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-50 shadow-lg bg-slate-100 flex items-center justify-center text-slate-400">
+                      <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-50 bg-slate-100 flex items-center justify-center text-slate-400">
                         {profile.photo_url ? (
                           <img src={profile.photo_url} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <UserCircle size={80} />
                         )}
                       </div>
-                      <label className="absolute bottom-0 right-0 bg-emerald-600 text-white p-2 rounded-full shadow-lg cursor-pointer hover:bg-emerald-700 transition-all">
+                      <label className="absolute bottom-0 right-0 bg-emerald-600 text-white p-2 rounded-full cursor-pointer hover:bg-emerald-700 transition-all">
                         <Camera size={18} />
                         <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} />
                       </label>
@@ -3830,7 +3771,7 @@ export default function App() {
                       <button 
                         type="submit"
                         disabled={isSavingProfile}
-                        className="bg-emerald-600 text-white px-10 py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
+                        className="bg-emerald-600 text-white px-10 py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
                       >
                         {isSavingProfile ? 'Salvando...' : 'Salvar Alterações'}
                       </button>
@@ -3977,7 +3918,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={exportType === 'patients' ? exportPatients : exportFinance}
-                    className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
                     <Download size={20} />
                     Exportar Agora
@@ -4074,7 +4015,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Confirmar Agendamento
                     </button>
@@ -4185,7 +4126,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Cadastrar Paciente
                     </button>
@@ -4253,7 +4194,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Salvar
                     </button>
@@ -4376,7 +4317,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Criar Plano
                     </button>
@@ -4530,7 +4471,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Cadastrar
                     </button>
@@ -4621,7 +4562,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       Salvar
                     </button>
@@ -4786,7 +4727,7 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
+                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl transition-all active:scale-95 ${
                         transactionType === 'INCOME' 
                           ? 'bg-emerald-600 shadow-emerald-100 hover:bg-emerald-700' 
                           : 'bg-rose-600 shadow-rose-100 hover:bg-rose-700'
@@ -4880,7 +4821,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => handlePayInstallment(selectedInstallment.id, paymentMethod)}
-                    className="flex-1 py-3 px-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 active:scale-95"
+                    className="flex-1 py-3 px-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-emerald-200 active:scale-95"
                   >
                     Confirmar
                   </button>
@@ -4980,23 +4921,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Floating Action Button (Mobile) */}
-      <div className="fixed bottom-20 md:bottom-8 right-6 z-40 lg:hidden hidden md:flex flex-col gap-3 no-print">
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="w-14 h-14 bg-indigo-600 text-white rounded-full shadow-2xl flex items-center justify-center active:scale-90 transition-transform"
-          title="Novo Agendamento"
-        >
-          <Calendar size={24} />
-        </button>
-        <button 
-          onClick={() => setIsPatientModalOpen(true)}
-          className="w-14 h-14 bg-emerald-600 text-white rounded-full shadow-2xl flex items-center justify-center active:scale-90 transition-transform"
-          title="Novo Paciente"
-        >
-          <Plus size={28} />
-        </button>
-      </div>
       {/* Notifications */}
       <AnimatePresence>
         {notification && (
@@ -5045,7 +4969,7 @@ export default function App() {
                     confirmation.onConfirm();
                     setConfirmation(null);
                   }}
-                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-lg shadow-rose-600/20 transition-all"
+                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-rose-600/20 transition-all"
                 >
                   Confirmar
                 </button>
@@ -5054,6 +4978,37 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Bottom Navigation - Mobile Only */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 tablet-l:hidden z-40 no-print">
+        <div className="flex items-center justify-around h-16">
+          {[
+            { id: 'dashboard' as const, icon: ClipboardList, label: 'Início' },
+            { id: 'agenda' as const, icon: Calendar, label: 'Agenda' },
+            { id: 'pacientes' as const, icon: Users, label: 'Pacientes' },
+            { id: 'financeiro' as const, icon: DollarSign, label: 'Financeiro' },
+            { id: 'configuracoes' as const, icon: Settings, label: 'Mais' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveTab(item.id);
+              }}
+              className={`flex flex-col items-center justify-center w-full h-16 transition-colors ${
+                activeTab === item.id
+                  ? 'text-emerald-600'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <item.icon size={24} />
+              <span className="text-[10px] font-medium mt-1">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {/* Main Content Padding for Mobile Bottom Nav */}
+      <div className="h-16 tablet-l:hidden" />
     </div>
         )
       } />
@@ -5142,7 +5097,7 @@ function ForgotPassword() {
             <button 
               type="submit"
               disabled={loading}
-              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
+              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
             >
               {loading ? 'Enviando...' : 'Enviar Instruções'}
             </button>
@@ -5280,7 +5235,7 @@ function ResetPassword() {
             <button 
               type="submit"
               disabled={loading || success}
-              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
+              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
             >
               {loading ? 'Processando...' : 'Redefinir Senha'}
             </button>
@@ -5320,7 +5275,7 @@ function PrintLayout({ children, title, onPrint }: { children: React.ReactNode, 
             </button>
             <button 
               onClick={onPrint}
-              className="print-btn flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+              className="print-btn flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-emerald-100"
             >
               <Printer size={20} />
               Imprimir Agora
