@@ -504,10 +504,12 @@ export default function App() {
   const [newAppointment, setNewAppointment] = useState({
     patient_id: '',
     dentist_id: '',
-    start_time: '',
-    end_time: '',
+    date: '',
+    time: '',
+    duration: '',
     notes: ''
   });
+  const [suggestedSlot, setSuggestedSlot] = useState<{ date: Date; duration: number; procedure: string } | null>(null);
 
   const [newPaymentPlan, setNewPaymentPlan] = useState({
     patient_id: '',
@@ -1211,6 +1213,116 @@ export default function App() {
       .join(' ');
   };
 
+  const getProcedureColor = (procedure: string) => {
+    const lower = (procedure || '').toLowerCase();
+    
+    if (/endo|canal/.test(lower)) {
+      return { bg: '#1e40af', hover: '#1e3a8a' }; // blue-600, blue-800
+    } else if (/restaura|resina/.test(lower)) {
+      return { bg: '#16a34a', hover: '#15803d' }; // green-600, green-700
+    } else if (/extra|exo/.test(lower)) {
+      return { bg: '#dc2626', hover: '#991b1b' }; // red-600, red-900
+    } else if (/higiene|limpeza|profila/.test(lower)) {
+      return { bg: '#ca8a04', hover: '#a16207' }; // yellow-600, yellow-700
+    } else if (/ortodo|alinha/.test(lower)) {
+      return { bg: '#7c3aed', hover: '#6d28d9' }; // purple-600, purple-700
+    } else if (/prot/.test(lower)) {
+      return { bg: '#db2777', hover: '#be123c' }; // pink-600, pink-700
+    } else {
+      return { bg: '#4b5563', hover: '#2d3748' }; // slate-600, slate-800
+    }
+  };
+
+  const getProcedureByDuration = (minutes: number): string => {
+    if (minutes < 30) {
+      return 'Avaliação';
+    } else if (minutes < 60) {
+      return 'Avaliação e limpeza';
+    } else if (minutes < 90) {
+      return 'Restauração';
+    } else if (minutes < 120) {
+      return 'Endodontia';
+    } else {
+      return 'Tratamento complexo';
+    }
+  };
+
+  const findAvailableSlots = (date: Date, workingHours = { start: 8, end: 18 }) => {
+    const dayAppointments = appointments
+      .filter(a => {
+        const appDate = new Date(a.start_time);
+        return appDate.toDateString() === date.toDateString();
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+    const slots: Array<{ startTime: Date; endTime: Date; duration: number; procedure: string }> = [];
+
+    // First slot: from working hours start to first appointment
+    if (dayAppointments.length === 0) {
+      const startTime = new Date(date);
+      startTime.setHours(workingHours.start, 0, 0, 0);
+      const endTime = new Date(date);
+      endTime.setHours(workingHours.end, 0, 0, 0);
+      const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+      slots.push({
+        startTime,
+        endTime,
+        duration,
+        procedure: getProcedureByDuration(duration)
+      });
+    } else {
+      // First slot: before first appointment
+      const firstAppStart = new Date(dayAppointments[0].start_time);
+      if (firstAppStart.getHours() > workingHours.start) {
+        const startTime = new Date(date);
+        startTime.setHours(workingHours.start, 0, 0, 0);
+        const duration = (firstAppStart.getTime() - startTime.getTime()) / (1000 * 60);
+        if (duration >= 15) {
+          slots.push({
+            startTime,
+            endTime: firstAppStart,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
+        }
+      }
+
+      // Slots between appointments
+      for (let i = 0; i < dayAppointments.length - 1; i++) {
+        const currentAppEnd = new Date(dayAppointments[i].end_time);
+        const nextAppStart = new Date(dayAppointments[i + 1].start_time);
+        const duration = (nextAppStart.getTime() - currentAppEnd.getTime()) / (1000 * 60);
+
+        if (duration >= 15) {
+          slots.push({
+            startTime: currentAppEnd,
+            endTime: nextAppStart,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
+        }
+      }
+
+      // Last slot: after last appointment
+      const lastAppEnd = new Date(dayAppointments[dayAppointments.length - 1].end_time);
+      if (lastAppEnd.getHours() < workingHours.end) {
+        const endTime = new Date(date);
+        endTime.setHours(workingHours.end, 0, 0, 0);
+        const duration = (endTime.getTime() - lastAppEnd.getTime()) / (1000 * 60);
+        if (duration >= 15) {
+          slots.push({
+            startTime: lastAppEnd,
+            endTime,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
+        }
+      }
+    }
+
+    return slots.sort((a, b) => b.duration - a.duration); // Sort by duration (biggest first)
+  };
+
   const handleCreateAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -1233,22 +1345,27 @@ export default function App() {
       alert('Erro: Dentista não identificado. Tente recarregar a página.');
       return;
     }
-    if (!newAppointment.start_time || newAppointment.start_time === '') {
-      alert('Por favor, selecione a data e hora de início.');
+    if (!newAppointment.date || newAppointment.date === '') {
+      alert('Por favor, selecione a data da consulta.');
       return;
     }
-    if (!newAppointment.end_time || newAppointment.end_time === '') {
-      alert('Por favor, selecione a data e hora de término.');
+    if (!newAppointment.time || newAppointment.time === '') {
+      alert('Por favor, selecione o horário da consulta.');
+      return;
+    }
+    if (!newAppointment.duration || newAppointment.duration === '') {
+      alert('Por favor, informe a duração da consulta em minutos.');
+      return;
+    }
+    const durationMinutes = parseInt(newAppointment.duration, 10);
+    if (isNaN(durationMinutes) || durationMinutes <= 0) {
+      alert('A duração da consulta deve ser um número maior que 0.');
       return;
     }
 
-    // Validate that end time is after start time
-    const startTime = new Date(newAppointment.start_time);
-    const endTime = new Date(newAppointment.end_time);
-    if (endTime <= startTime) {
-      alert('A hora de término deve ser posterior à hora de início.');
-      return;
-    }
+    // Calculate start and end times
+    const startTime = new Date(`${newAppointment.date}T${newAppointment.time}`);
+    const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
 
     try {
       const formattedProcedure = formatProcedure(newAppointment.notes || '');
@@ -1267,9 +1384,10 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setIsModalOpen(false);
+        setSuggestedSlot(null);
         fetchData();
 
-        setNewAppointment({ patient_id: '', dentist_id: '', start_time: '', end_time: '', notes: '' });
+        setNewAppointment({ patient_id: '', dentist_id: '', date: '', time: '', duration: '', notes: '' });
         showNotification('Agendamento realizado com sucesso!');
       } else {
         showNotification(data.error || 'Erro ao realizar agendamento', 'error');
@@ -1522,9 +1640,30 @@ export default function App() {
       return;
     }
 
+    // Calcula o dia natural da consulta
+    const appointmentDate = new Date(app.start_time);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    appointmentDate.setHours(0, 0, 0, 0);
+    
+    const daysUntilAppointment = Math.floor((appointmentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    
+    let dayDescription = '';
+    if (daysUntilAppointment === 0) {
+      dayDescription = 'hoje';
+    } else if (daysUntilAppointment === 1) {
+      dayDescription = 'amanhã';
+    } else if (daysUntilAppointment > 1 && daysUntilAppointment <= 6) {
+      const daysOfWeek = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+      const dayOfWeek = appointmentDate.getDay();
+      dayDescription = `no próximo ${daysOfWeek[dayOfWeek]}`;
+    } else {
+      dayDescription = `em ${appointmentDate.toLocaleDateString('pt-BR')}`;
+    }
+
     // Formata a mensagem de WhatsApp conforme solicitado
     const time = new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const message = `Olá ${app.patient_name}, você confirma sua consulta hoje às ${time}?`;
+    const message = `Olá ${app.patient_name}, você confirma sua consulta ${dayDescription} às ${time}?`;
     
     // Limpa o número de telefone (apenas números)
     let phone = app.patient_phone.replace(/\D/g, '');
@@ -2374,10 +2513,16 @@ export default function App() {
                                         <div className="space-y-1">
                                           {dayAppointments.slice(0, 3).map(app => {
                                             const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
+                                            const colors = getProcedureColor(app.notes || '');
                                             return (
                                               <div
                                                 key={app.id}
-                                                className="bg-primary/90 text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer hover:bg-primary transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                style={{
+                                                  backgroundColor: colors.bg,
+                                                }}
+                                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
+                                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
+                                                className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
                                                 title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
                                                 onClick={() => setWeekSheetSelectedAppointment(app)}
                                               >
@@ -2796,19 +2941,32 @@ export default function App() {
                                       <p className="text-slate-500 font-medium">Nenhum agendamento para este dia</p>
                                       <button
                                         onClick={() => {
-                                          // Pre-fill the appointment modal with the selected date
-                                          const startDateTime = new Date(monthSheetSelectedDay);
-                                          startDateTime.setHours(9, 0, 0, 0); // Default to 9:00 AM
-                                          const endDateTime = new Date(monthSheetSelectedDay);
-                                          endDateTime.setHours(10, 0, 0, 0); // Default to 10:00 AM
-                                          
-                                          setNewAppointment({
-                                            patient_id: '',
-                                            dentist_id: user?.id ? user.id.toString() : '',
-                                            start_time: startDateTime.toISOString().slice(0, 16), // Format for datetime-local
-                                            end_time: endDateTime.toISOString().slice(0, 16),
-                                            notes: ''
-                                          });
+                                          const slots = findAvailableSlots(monthSheetSelectedDay!);
+                                          if (slots.length > 0) {
+                                            const bestSlot = slots[0]; // Biggest slot
+                                            setSuggestedSlot({
+                                              date: bestSlot.startTime,
+                                              duration: bestSlot.duration,
+                                              procedure: bestSlot.procedure
+                                            });
+                                            setNewAppointment({
+                                              patient_id: '',
+                                              dentist_id: user?.id ? user.id.toString() : '',
+                                              date: bestSlot.startTime.toISOString().split('T')[0],
+                                              time: bestSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }).replace(':', ''),
+                                              duration: Math.floor(bestSlot.duration).toString(),
+                                              notes: bestSlot.procedure
+                                            });
+                                          } else {
+                                            setNewAppointment({
+                                              patient_id: '',
+                                              dentist_id: user?.id ? user.id.toString() : '',
+                                              date: monthSheetSelectedDay!.toISOString().split('T')[0],
+                                              time: '',
+                                              duration: '30',
+                                              notes: ''
+                                            });
+                                          }
                                           setMonthSheetSelectedDay(null);
                                           setIsModalOpen(true);
                                         }}
@@ -4527,31 +4685,48 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setSuggestedSlot(null);
+              }}
               className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-lg rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="relative bg-white w-full max-w-md rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
             >
-              <div className="p-6 md:p-8">
-                <div className="flex justify-between items-center mb-6 md:mb-8">
-                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Novo Agendamento</h3>
-                  <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <div className="p-4 md:p-6">
+                <div className="flex justify-between items-center mb-4 md:mb-6">
+                  <h3 className="text-lg md:text-xl font-bold text-slate-900">Novo Agendamento</h3>
+                  <button onClick={() => {
+                    setIsModalOpen(false);
+                    setSuggestedSlot(null);
+                  }} className="text-slate-400 hover:text-slate-600">
                     <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleCreateAppointment} className="space-y-6">
+                {suggestedSlot && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs font-bold text-blue-700 uppercase mb-1">💡 Sugestão do Sistema</p>
+                    <p className="text-sm text-blue-900">
+                      Horário: <span className="font-bold">{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span> • 
+                      Duração: <span className="font-bold">{Math.floor(suggestedSlot.duration)}min</span> • 
+                      Procedimento: <span className="font-bold">{suggestedSlot.procedure}</span>
+                    </p>
+                  </div>
+                )}
+
+                <form onSubmit={handleCreateAppointment} className="space-y-4">
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Paciente</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Paciente</label>
                     <select 
                       required
                       value={newAppointment.patient_id}
                       onChange={(e) => setNewAppointment({...newAppointment, patient_id: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     >
                       <option value="">Selecione um paciente</option>
                       {patients.map(p => (
@@ -4560,55 +4735,71 @@ export default function App() {
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Início</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Data</label>
                       <input 
                         required
-                        type="datetime-local" 
-                        value={newAppointment.start_time}
-                        onChange={(e) => setNewAppointment({...newAppointment, start_time: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        type="date" 
+                        value={newAppointment.date}
+                        onChange={(e) => setNewAppointment({...newAppointment, date: e.target.value})}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Término</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Horário</label>
                       <input 
                         required
-                        type="datetime-local" 
-                        value={newAppointment.end_time}
-                        onChange={(e) => setNewAppointment({...newAppointment, end_time: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        type="time" 
+                        value={newAppointment.time}
+                        onChange={(e) => setNewAppointment({...newAppointment, time: e.target.value})}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Procedimento</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Duração (minutos)</label>
+                    <input 
+                      required
+                      type="number" 
+                      min="1"
+                      value={newAppointment.duration}
+                      onChange={(e) => setNewAppointment({...newAppointment, duration: e.target.value})}
+                      placeholder="Ex: 30, 45, 60"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Procedimento</label>
                     <input
                       type="text"
                       value={newAppointment.notes || ''}
                       onChange={(e) => setNewAppointment({...newAppointment, notes: e.target.value})}
                       placeholder="Ex: endo 11, canal 11, restauração 26"
                       maxLength={80}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     />
-                    <p className="mt-1 text-xs text-slate-400">Foque em um procedimento curto (ex: endo 11).</p>
+                    <p className="mt-0.5 text-xs text-slate-400">Foque em um procedimento curto (ex: endo 11).</p>
                   </div>
 
-                  <div className="flex gap-4 pt-4">
+                  <div className="flex gap-3 pt-2">
                     <button 
                       type="button"
-                      onClick={() => setIsModalOpen(false)}
-                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
+                      onClick={() => {
+                        setIsModalOpen(false);
+                        setSuggestedSlot(null);
+                      }}
+                      className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50 transition-all text-sm"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
+                      className="flex-1 px-4 py-2.5 bg-primary text-white font-bold rounded-lg shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 text-sm"
                     >
-                      Confirmar Agendamento
+                      Confirmar
                     </button>
                   </div>
                 </form>
