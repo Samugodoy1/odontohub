@@ -7,7 +7,7 @@ import {
   ClipboardList, 
   DollarSign, 
   Plus, 
-  Search, 
+  Search,
   ChevronRight,
   ChevronLeft,
   MessageCircle,
@@ -36,7 +36,8 @@ import {
   Download,
   X,
   List,
-  Activity
+  Activity,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Odontogram } from './components/Odontogram';
@@ -45,7 +46,7 @@ import { PatientClinical } from './components/PatientClinical';
 import { TermsPage, PrivacyPage } from './components/LegalPages';
 import { NovaEvolucao } from './components/NovaEvolucao';
 import { Dashboard } from './components/Dashboard';
-import { formatDate, isOverdue } from './utils/dateUtils';
+import { formatDate, isOverdue, getFreeSlots, getSuggestion, FreeSlot } from './utils/dateUtils';
 
 // Types
 interface Patient {
@@ -472,6 +473,8 @@ export default function App() {
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedPatientTab, setSelectedPatientTab] = useState<'evolucao' | 'imagens' | 'financeiro'>('evolucao');
+  const [isAnamnesisEditing, setIsAnamnesisEditing] = useState(false);
+  const [showTreatmentPlanSummary, setShowTreatmentPlanSummary] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [isDentistModalOpen, setIsDentistModalOpen] = useState(false);
@@ -480,6 +483,9 @@ export default function App() {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [patientListFilter, setPatientListFilter] = useState<'all' | 'in-treatment' | 'review' | 'overdue'>('all');
+  const [patientActionsToday, setPatientActionsToday] = useState<Set<number>>(new Set());
+  const [patientsInlineFeedback, setPatientsInlineFeedback] = useState('');
   const [dentistSearchTerm, setDentistSearchTerm] = useState('');
   const [dentistStatusFilter, setDentistStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -488,6 +494,7 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [monthSheetSelectedDay, setMonthSheetSelectedDay] = useState<Date | null>(null);
   const [weekSheetSelectedAppointment, setWeekSheetSelectedAppointment] = useState<Appointment | null>(null);
+  const [weekSuggestionSheet, setWeekSuggestionSheet] = useState<{ date: Date; start: string; end: string; duration: number; procedure: string } | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -1112,11 +1119,27 @@ export default function App() {
   ).length;
 
   const nextAppointments = appointments
-    .filter(a => new Date(a.start_time) >= dashboardNow)
+    .filter(a => new Date(a.start_time).toDateString() === dashboardNow.toDateString() && new Date(a.start_time) >= dashboardNow && a.status !== 'FINISHED' && a.status !== 'CANCELLED')
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 5);
 
-  const todayAppointmentsCount = appointments.filter(a => new Date(a.start_time).toDateString() === dashboardNow.toDateString()).length;
+  const todayAppointmentsTotalCount = appointments.filter(a => new Date(a.start_time).toDateString() === dashboardNow.toDateString()).length;
+  const todayAppointmentsRemainingCount = appointments.filter(a => 
+    new Date(a.start_time).toDateString() === dashboardNow.toDateString() &&
+    a.status !== 'FINISHED' &&
+    a.status !== 'CANCELLED'
+  ).length;
+
+  const tomorrowStart = new Date(dashboardNow);
+  tomorrowStart.setDate(dashboardNow.getDate() + 1);
+  tomorrowStart.setHours(0, 0, 0, 0);
+  const tomorrowEnd = new Date(tomorrowStart);
+  tomorrowEnd.setHours(23, 59, 59, 999);
+
+  const tomorrowUnconfirmedCount = appointments.filter(a => {
+    const apptDate = new Date(a.start_time);
+    return apptDate >= tomorrowStart && apptDate <= tomorrowEnd && a.status !== 'CONFIRMED' && a.status !== 'CANCELLED';
+  }).length;
 
   // Weekly Revenue Data for the Chart
   const weeklyRevenueData = Array.from({ length: 7 }, (_, i) => {
@@ -1175,6 +1198,216 @@ export default function App() {
       notes: ''
     });
     setIsModalOpen(true);
+  };
+
+  const openPatientAppointmentModal = (patient: Patient) => {
+    const dentistId = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
+
+    setNewAppointment({
+      patient_id: patient.id.toString(),
+      dentist_id: dentistId || '',
+      date: new Date().toLocaleDateString('en-CA'),
+      time: '',
+      duration: '30',
+      notes: ''
+    });
+    setIsModalOpen(true);
+  };
+
+  const contactPatientOnWhatsApp = (patient: Patient) => {
+    if (!patient.phone) {
+      alert('Este paciente não possui telefone cadastrado.');
+      return;
+    }
+
+    let phone = patient.phone.replace(/\D/g, '');
+    if (phone.length === 10 || phone.length === 11) {
+      phone = `55${phone}`;
+    } else if (phone.length > 11 && !phone.startsWith('55')) {
+      phone = `55${phone}`;
+    }
+
+    const firstName = (patient.name || '').split(' ')[0] || 'Olá';
+    const message = `Olá ${firstName}, tudo bem?`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
+  const getPatientLastVisitDate = (patient: Patient) => {
+    const finishedAppointments = appointments
+      .filter(app => app.patient_id === patient.id && app.status === 'FINISHED')
+      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+
+    if (finishedAppointments.length > 0) {
+      return new Date(finishedAppointments[0].start_time);
+    }
+
+    if (patient.evolution && patient.evolution.length > 0) {
+      const evolutionDates = patient.evolution
+        .map(item => new Date(item.date))
+        .filter(date => !Number.isNaN(date.getTime()))
+        .sort((a, b) => b.getTime() - a.getTime());
+
+      return evolutionDates[0] || null;
+    }
+
+    return null;
+  };
+
+  const formatTimeSinceLastVisit = (date: Date | null) => {
+    if (!date) return 'Sem visitas registradas';
+
+    const nowDate = new Date();
+    const diffInDays = Math.max(0, Math.floor((nowDate.getTime() - date.getTime()) / 86400000));
+
+    if (diffInDays < 30) {
+      if (diffInDays <= 1) return 'há 1 dia';
+      if (diffInDays < 7) return `há ${diffInDays} dias`;
+      const weeks = Math.floor(diffInDays / 7);
+      return `há ${weeks} ${weeks === 1 ? 'semana' : 'semanas'}`;
+    }
+
+    const months = Math.max(1, Math.floor(diffInDays / 30));
+    if (months < 12) {
+      return `há ${months} ${months === 1 ? 'mês' : 'meses'}`;
+    }
+
+    const years = Math.floor(months / 12);
+    return `há ${years} ${years === 1 ? 'ano' : 'anos'}`;
+  };
+
+  const formatNextVisitLabel = (date: Date | null) => {
+    if (!date) return null;
+
+    const startToday = new Date(now);
+    startToday.setHours(0, 0, 0, 0);
+    const startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+    const startAfterTomorrow = new Date(startTomorrow);
+    startAfterTomorrow.setDate(startAfterTomorrow.getDate() + 1);
+
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    const timeLabel = `${hh}:${mm}`;
+
+    if (date >= startToday && date < startTomorrow) {
+      return `Hoje, ${timeLabel}`;
+    }
+    if (date >= startTomorrow && date < startAfterTomorrow) {
+      return `Amanhã, ${timeLabel}`;
+    }
+    return `${formatDate(date.toISOString())}, ${timeLabel}`;
+  };
+
+  const getRelativeDayLabel = (dateStr: string) => {
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return formatDate(dateStr) || 'Data inválida';
+
+    const startToday = new Date(now);
+    startToday.setHours(0, 0, 0, 0);
+    const startYesterday = new Date(startToday);
+    startYesterday.setDate(startYesterday.getDate() - 1);
+    const startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+
+    if (date >= startToday && date < startTomorrow) return 'Hoje';
+    if (date >= startYesterday && date < startToday) return 'Ontem';
+
+    return formatDate(date.toISOString()) || formatDate(dateStr) || 'Sem data';
+  };
+
+  const getPatientCardMeta = (patient: Patient) => {
+    const lastVisitDate = getPatientLastVisitDate(patient);
+
+    // ── Derive clinical fields from real data ──────────────────────────────
+
+    // hasActiveTreatment: treatment plan with open items OR a future scheduled/confirmed appointment
+    const hasActiveTreatment =
+      (patient.treatmentPlan?.some(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO') ?? false) ||
+      appointments.some(app =>
+        app.patient_id === patient.id &&
+        new Date(app.start_time) > now &&
+        app.status !== 'CANCELLED' && app.status !== 'FINISHED'
+      );
+
+    // nextVisitDate: nearest upcoming SCHEDULED/CONFIRMED appointment.
+    const scheduledAppointments = appointments
+      .filter(app =>
+        app.patient_id === patient.id &&
+        (app.status === 'SCHEDULED' || app.status === 'CONFIRMED')
+      )
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+    const nextVisitAppointment = scheduledAppointments.find(app => new Date(app.start_time) >= now) ?? null;
+    const nextVisitDate: Date | null = nextVisitAppointment ? new Date(nextVisitAppointment.start_time) : null;
+
+    // isInRecallProgram: patient has at least one recorded visit (ever seen before)
+    const isInRecallProgram = lastVisitDate !== null;
+
+    // Fallback signal when there's no next visit scheduled.
+    const daysSinceLastVisit = lastVisitDate
+      ? Math.floor((now.getTime() - lastVisitDate.getTime()) / (1000 * 60 * 60 * 24))
+      : Number.POSITIVE_INFINITY;
+
+    // ── Clinical priority rules (strict order) ────────────────────────────
+    // 1. em_tratamento – nextVisitDate exists and today <= nextVisitDate
+    // 2. atrasado      – daysSinceLastVisit > 180 (only when nextVisitDate is null)
+    // 3. revisao       – daysSinceLastVisit > 90  (only when nextVisitDate is null)
+    // 4. em_dia        – otherwise
+
+    type AttentionKey = 'overdue' | 'review' | 'up-to-date';
+    type PatientStatus = 'em_tratamento' | 'atrasado' | 'revisao' | 'em_dia';
+    let attentionKey: AttentionKey;
+    let status: PatientStatus;
+    let clinicalStatus: string;
+
+    if (nextVisitDate !== null && now <= nextVisitDate) {
+      status       = 'em_tratamento';
+      attentionKey = 'up-to-date';
+      clinicalStatus = 'Em tratamento';
+    } else if (nextVisitDate !== null && now > nextVisitDate) {
+      // Missed scheduled appointment should still be treated as attention-needed.
+      status       = 'atrasado';
+      attentionKey   = 'overdue';
+      clinicalStatus = 'Inativo';
+    } else if (nextVisitDate === null) {
+      if (daysSinceLastVisit > 180) {
+        status       = 'atrasado';
+        attentionKey = 'overdue';
+        clinicalStatus = 'Inativo';
+      } else if (daysSinceLastVisit > 90) {
+        status       = 'revisao';
+        attentionKey = 'review';
+        clinicalStatus = 'Revisão';
+      } else {
+        status       = 'em_dia';
+        attentionKey = 'up-to-date';
+        clinicalStatus = 'Em dia';
+      }
+    } else {
+      status       = 'em_dia';
+      attentionKey   = 'up-to-date';
+      clinicalStatus = 'Em dia';
+    }
+
+    const attentionStatusMap: Record<AttentionKey, { key: AttentionKey; label: string; dot: string; tone: string }> = {
+      'overdue':    { key: 'overdue',    label: 'Atrasado',        dot: 'bg-rose-500',    tone: 'text-rose-700 bg-rose-50 border-rose-100' },
+      'review':     { key: 'review',     label: 'Revisão próxima', dot: 'bg-amber-400',   tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+      'up-to-date': { key: 'up-to-date', label: 'Em dia',          dot: 'bg-emerald-500', tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+    };
+
+    return {
+      lastVisitDate,
+      lastVisitLabel: formatTimeSinceLastVisit(lastVisitDate),
+      clinicalStatus,
+      attentionStatus: attentionStatusMap[attentionKey],
+      // expose derived fields for future consumers
+      hasActiveTreatment,
+      nextVisitDate,
+      nextVisitLabel: formatNextVisitLabel(nextVisitDate),
+      isInRecallProgram,
+      daysSinceLastVisit,
+      status,
+    };
   };
 
   const formatProcedure = (input: string) => {
@@ -2168,13 +2401,16 @@ export default function App() {
                 user={user}
                 patients={patients}
                 nextAppointments={nextAppointments}
-                todayAppointmentsCount={todayAppointmentsCount}
+                todayAppointmentsTotalCount={todayAppointmentsTotalCount}
+                todayAppointmentsRemainingCount={todayAppointmentsRemainingCount}
                 todayRevenue={dailyRevenue}
+                tomorrowUnconfirmedCount={tomorrowUnconfirmedCount}
                 searchTerm={searchTerm}
                 setSearchTerm={setSearchTerm}
                 openPatientRecord={openPatientRecord}
                 setIsModalOpen={setIsModalOpen}
                 setActiveTab={setActiveTab}
+                sendReminder={sendReminder}
               />
             )}
 
@@ -2285,7 +2521,7 @@ export default function App() {
 
                       const filtered = getFilteredAppointments();
 
-                      if (filtered.length === 0 && agendaViewMode !== 'month') {
+                      if (filtered.length === 0 && agendaViewMode === 'day') {
                         return (
                           <div className="p-20 text-center">
                             <Calendar className="mx-auto text-slate-200 mb-4" size={64} />
@@ -2378,7 +2614,33 @@ export default function App() {
                         );
                       };
 
-                      if (agendaFocusMode) {
+                      const renderSuggestion = (slot: FreeSlot) => {
+                        const suggestion = getSuggestion(slot.duration);
+                        return (
+                          <div
+                            key={`suggestion-${slot.start}-${slot.end}`}
+                            className="py-1 px-6 hover:bg-slate-50 transition-colors cursor-pointer group"
+                            onClick={() => {
+                              // Pre-fill new appointment form
+                              setNewAppointment({
+                                patient_id: '',
+                                dentist_id: user?.id ? user.id.toString() : '',
+                                date: selectedDate.toISOString().split('T')[0],
+                                time: slot.start.replace(':', ''),
+                                duration: slot.duration.toString(),
+                                notes: suggestion
+                              });
+                              setIsModalOpen(true);
+                            }}
+                          >
+                            <span className="text-xs text-gray-500">
+                              💡 {slot.start} – {slot.end}   {suggestion}
+                            </span>
+                          </div>
+                        );
+                      };
+
+                      if (agendaFocusMode && agendaViewMode === 'day') {
                         const todayStr = new Date().toDateString();
                         const isToday = selectedDate.toDateString() === todayStr;
                         const todayApps = filtered.filter(a => new Date(a.start_time).toDateString() === todayStr);
@@ -2426,18 +2688,18 @@ export default function App() {
                           weekDays.push(day);
                         }
 
-                        // Calculate earliest and latest appointment times for the week
-                        let earliestHour = 6;
-                        let latestHour = 22;
+                        // Keep weekly grid broad enough to always include suggestion hours
+                        let earliestHour = 8;
+                        let latestHour = 18;
                         
                         if (filtered.length > 0) {
                           const hours = filtered.map(a => new Date(a.start_time).getHours());
                           earliestHour = Math.min(...hours);
                           latestHour = Math.max(...hours);
                           
-                          // Add one hour buffer before and after
-                          earliestHour = Math.max(0, earliestHour - 1);
-                          latestHour = Math.min(23, latestHour + 1);
+                          // Add one hour buffer before and after while always including 08:00-18:00
+                          earliestHour = Math.max(0, Math.min(8, earliestHour - 1));
+                          latestHour = Math.min(23, Math.max(18, latestHour + 1));
                         }
 
                         const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -2445,6 +2707,72 @@ export default function App() {
                         for (let h = earliestHour; h <= latestHour; h++) {
                           timeSlots.push(h);
                         }
+
+                        const timeToMinutes = (time: string) => {
+                          const [h, m] = time.split(':').map(Number);
+                          return h * 60 + m;
+                        };
+
+                        const weekdayCandidates = weekDays.map((day, idx) => {
+                          const dayOfWeek = day.getDay();
+                          if (dayOfWeek === 0 || dayOfWeek === 6) {
+                            return null;
+                          }
+
+                          const dayAppointments = filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate.toDateString() === day.toDateString() && a.status !== 'CANCELLED';
+                          });
+
+                          const validSlots = getFreeSlots(dayAppointments, '08:00', '18:00')
+                            .filter(slot => slot.duration >= 30)
+                            .map(slot => ({
+                              ...slot,
+                              startMin: timeToMinutes(slot.start),
+                              endMin: timeToMinutes(slot.end)
+                            }));
+
+                          if (validSlots.length === 0) return null;
+
+                          const bestSlot = validSlots.sort((a, b) => b.duration - a.duration)[0];
+
+                          return {
+                            ...bestSlot,
+                            day,
+                            dayIndex: idx,
+                            appointmentCount: dayAppointments.length
+                          };
+                        }).filter(Boolean);
+
+                        const workdayAppointmentCount = weekDays.reduce((total, day) => {
+                          const dayOfWeek = day.getDay();
+                          if (dayOfWeek === 0 || dayOfWeek === 6) {
+                            return total;
+                          }
+
+                          return total + filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate.toDateString() === day.toDateString() && a.status !== 'CANCELLED';
+                          }).length;
+                        }, 0);
+
+                        const isMostlyEmptyWeek = workdayAppointmentCount <= 2;
+                        const allWorkdaysCompletelyFree = workdayAppointmentCount === 0;
+                        const maxSuggestionDays = allWorkdaysCompletelyFree ? 1 : 2;
+                        const limitedCandidates = isMostlyEmptyWeek
+                          ? weekdayCandidates
+                              .sort((a, b) => {
+                                const appointmentWeight = (b.appointmentCount - a.appointmentCount) * 1000;
+                                const durationWeight = b.duration - a.duration;
+                                const dayWeight = a.dayIndex - b.dayIndex;
+                                return appointmentWeight || durationWeight || dayWeight;
+                              })
+                              .slice(0, Math.min(maxSuggestionDays, weekdayCandidates.length))
+                          : weekdayCandidates;
+
+                        const weekBestSlots = weekDays.map((_, idx) => {
+                          return limitedCandidates.find(candidate => candidate.dayIndex === idx) || null;
+                        });
 
                         return (
                           <div className="space-y-4">
@@ -2459,10 +2787,11 @@ export default function App() {
                                 {/* Day headers */}
                                 {weekDays.map((day, idx) => {
                                   const isToday = day.toDateString() === new Date().toDateString();
+                                  const bestSlotSuggestion = weekBestSlots[idx];
                                   return (
                                     <div 
                                       key={idx} 
-                                      className={`p-3 text-center ${
+                                      className={`p-3 text-center relative ${
                                         isToday ? 'bg-primary/10' : 'bg-slate-50'
                                       }`}
                                     >
@@ -2474,6 +2803,25 @@ export default function App() {
                                       </div>
                                       {isToday && (
                                         <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
+                                      )}
+                                      {bestSlotSuggestion && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setWeekSuggestionSheet({
+                                              date: day,
+                                              start: bestSlotSuggestion.start,
+                                              end: bestSlotSuggestion.end,
+                                              duration: bestSlotSuggestion.duration,
+                                              procedure: getSuggestion(bestSlotSuggestion.duration)
+                                            });
+                                          }}
+                                          className="absolute top-1 right-1 z-10 text-[10px] leading-none text-slate-500 bg-white/80 rounded px-0.5 hover:text-slate-600 transition-colors"
+                                          title="Ver sugestao"
+                                        >
+                                          💡
+                                        </button>
                                       )}
                                     </div>
                                   );
@@ -2502,7 +2850,6 @@ export default function App() {
                                     }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
                                     const isToday = day.toDateString() === new Date().toDateString();
-
                                     return (
                                       <div 
                                         key={dayIdx}
@@ -2544,6 +2891,304 @@ export default function App() {
                                   })}
                                 </div>
                               ))}
+                            </div>
+
+                            {/* Bottom Sheet for selected appointment in week view */}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setWeekSheetSelectedAppointment(null)}
+                              />
+                            )}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-32"
+                              >
+                                <div className="p-6 space-y-6">
+                                  {/* Close button and header */}
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <h3 className="text-2xl font-bold text-slate-900">
+                                        {new Date(weekSheetSelectedAppointment.start_time).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', weekday: 'long' })}
+                                      </h3>
+                                      <p className="text-sm text-slate-500 mt-1">Detalhes do Agendamento</p>
+                                    </div>
+                                    <button
+                                      onClick={() => setWeekSheetSelectedAppointment(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={24} className="text-slate-400" />
+                                    </button>
+                                  </div>
+
+                                  {/* Appointment details */}
+                                  <div className="pt-4 space-y-6">
+                                    {/* Time and duration */}
+                                    <div className="space-y-2">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Horário</p>
+                                      <div className="flex items-center gap-4">
+                                        <div>
+                                          <p className="text-2xl font-bold text-primary">
+                                            {new Date(weekSheetSelectedAppointment.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                          <p className="text-[10px] text-slate-400 mt-1">
+                                            {(() => {
+                                              const start = new Date(weekSheetSelectedAppointment.start_time);
+                                              const end = new Date(weekSheetSelectedAppointment.end_time);
+                                              const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+                                              return `${mins}min`;
+                                            })()}
+                                          </p>
+                                        </div>
+                                        <div className="h-12 w-[1px] bg-slate-200" />
+                                        <div>
+                                          <p className="text-sm text-slate-500">Término</p>
+                                          <p className="text-lg font-bold text-slate-700 mt-0.5">
+                                            {new Date(weekSheetSelectedAppointment.end_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Patient info */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-3">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Paciente</p>
+                                      <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 overflow-hidden border border-slate-200 shrink-0">
+                                          {(() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            return patient?.photo_url ? (
+                                              <img src={patient.photo_url} alt={weekSheetSelectedAppointment.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                            ) : (
+                                              <UserCircle size={24} />
+                                            );
+                                          })()}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="font-bold text-slate-900">{weekSheetSelectedAppointment.patient_name}</p>
+                                          <p className="text-sm text-slate-500 truncate">{weekSheetSelectedAppointment.notes || 'Consulta'}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Status and controls */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-4">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ações</p>
+                                      <div className="space-y-3">
+                                        <select
+                                          value={weekSheetSelectedAppointment.status}
+                                          onChange={(e) => {
+                                            updateStatus(weekSheetSelectedAppointment.id, e.target.value as Appointment['status']);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full px-4 py-3 text-sm bg-white border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        >
+                                          <option value="SCHEDULED">Agendado</option>
+                                          <option value="CONFIRMED">Confirmado</option>
+                                          <option value="IN_PROGRESS">Em Andamento</option>
+                                          <option value="FINISHED">Finalizado</option>
+                                          <option value="CANCELLED">Cancelado</option>
+                                          <option value="NO_SHOW">Faltou</option>
+                                        </select>
+
+                                        <button
+                                          onClick={() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            if (patient) openPatientRecord(patient.id);
+                                            setActiveTab('prontuario');
+                                            navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                                        >
+                                          <Activity size={18} />
+                                          Iniciar Atendimento
+                                        </button>
+
+                                        <button
+                                          onClick={() => {
+                                            sendReminder(weekSheetSelectedAppointment);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-slate-50 text-primary px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-100 transition-all border border-slate-200"
+                                        >
+                                          <MessageCircle size={18} />
+                                          Enviar Lembrete WhatsApp
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+
+                            {/* Bottom Sheet for weekly suggestion */}
+                            {weekSuggestionSheet && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setWeekSuggestionSheet(null)}
+                              />
+                            )}
+                            {weekSuggestionSheet && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-24"
+                              >
+                                <div className="p-6 space-y-5">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-base font-semibold text-slate-800">Sugestao</p>
+                                    <button
+                                      onClick={() => setWeekSuggestionSheet(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={20} className="text-slate-400" />
+                                    </button>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <p className="text-sm text-slate-600">
+                                      {weekSuggestionSheet.start} - {weekSuggestionSheet.end}
+                                    </p>
+                                    <p className="text-sm text-slate-600">{weekSuggestionSheet.procedure}</p>
+                                  </div>
+
+                                  <button
+                                    onClick={() => {
+                                      setNewAppointment({
+                                        patient_id: '',
+                                        dentist_id: user?.id ? user.id.toString() : '',
+                                        date: weekSuggestionSheet.date.toISOString().split('T')[0],
+                                        time: weekSuggestionSheet.start.replace(':', ''),
+                                        duration: String(weekSuggestionSheet.duration),
+                                        notes: weekSuggestionSheet.procedure
+                                      });
+                                      setWeekSuggestionSheet(null);
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-all"
+                                  >
+                                    Agendar
+                                  </button>
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+
+                        return (
+                          <div className="space-y-6">
+                            {/* Week grid */}
+                            <div className="space-y-4">
+                              {/* Week header with day names and dates */}
+                              <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
+                                <div className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border border-slate-200 rounded-2xl overflow-hidden shadow-sm divide-x divide-slate-200">
+                                  {/* Time column header */}
+                                  <div className="bg-slate-50 p-2 flex items-center justify-center">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Hora</span>
+                                  </div>
+                                  
+                                  {/* Day headers */}
+                                  {weekDays.map((day, idx) => {
+                                    const isToday = day.toDateString() === new Date().toDateString();
+                                    return (
+                                      <div 
+                                        key={idx} 
+                                        className={`p-3 text-center ${
+                                          isToday ? 'bg-primary/10' : 'bg-slate-50'
+                                        }`}
+                                      >
+                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                          {dayLabels[idx]}
+                                        </div>
+                                        <div className={`text-lg font-bold mt-1 ${isToday ? 'text-primary' : 'text-slate-900'}`}>
+                                          {day.getDate()}
+                                        </div>
+                                        {isToday && (
+                                          <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Time slots grid */}
+                              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                {timeSlots.map(hour => (
+                                  <div key={hour} className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border-b border-slate-200 last:border-b-0 min-h-[60px] divide-x divide-slate-200">
+                                    {/* Time label */}
+                                    <div className="bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
+                                      <span className="text-[10px] font-bold text-slate-400">
+                                        {String(hour).padStart(2, '0')}:00
+                                      </span>
+                                    </div>
+
+                                    {/* Day columns */}
+                                    {weekDays.map((day, dayIdx) => {
+                                      const dayAppointments = filtered.filter(a => {
+                                        const appDate = new Date(a.start_time);
+                                        const appHour = appDate.getHours();
+                                        // Show appointment if it starts in this hour
+                                        return appDate.toDateString() === day.toDateString() && appHour === hour;
+                                      }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                                      const isToday = day.toDateString() === new Date().toDateString();
+
+                                      return (
+                                        <div 
+                                          key={dayIdx}
+                                          className={`p-1.5 relative ${
+                                            isToday ? 'bg-primary/5' : 'bg-white'
+                                          } hover:bg-slate-50 transition-colors`}
+                                        >
+                                          <div className="space-y-1">
+                                            {dayAppointments.slice(0, 3).map(app => {
+                                              const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
+                                              const colors = getProcedureColor(app.notes || '');
+                                              return (
+                                                <div
+                                                  key={app.id}
+                                                  style={{
+                                                    backgroundColor: colors.bg,
+                                                  }}
+                                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
+                                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
+                                                  className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                  title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                                                  onClick={() => setWeekSheetSelectedAppointment(app)}
+                                                >
+                                                  <div className="truncate leading-tight">{firstName}</div>
+                                                  <div className="text-[7px] opacity-90 leading-tight">
+                                                    {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                            {dayAppointments.length > 3 && (
+                                              <div className="text-[7px] text-primary font-bold px-1 py-0.5">
+                                                +{dayAppointments.length - 3}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
 
                             {/* Bottom Sheet for selected appointment in week view */}
@@ -2991,6 +3636,9 @@ export default function App() {
                         return appDate.toDateString() === selectedDate.toDateString();
                       });
 
+                      // Calculate free slots for suggestions
+                      const freeSlots = getFreeSlots(todayAppointments);
+
                       const pastFinishedAppointments = filtered.filter(a => {
                         const appDate = new Date(a.start_time);
                         return a.status === 'FINISHED' && appDate < new Date() && appDate.toDateString() !== selectedDate.toDateString();
@@ -3027,28 +3675,47 @@ export default function App() {
                         
                         if (apps.length === 0 && !showNowInThisPeriod) return null;
 
-                        let content;
-                        if (!showNowInThisPeriod) {
-                          content = apps.map(app => renderAppointment(app));
-                        } else {
+                        // Filter free slots for this period
+                        const periodFreeSlots = freeSlots.filter(slot => {
+                          const slotHour = parseInt(slot.start.split(':')[0]);
+                          return slotHour >= periodStart && slotHour < periodEnd;
+                        });
+
+                        // Create timeline items: appointments and suggestions
+                        const timelineItems: Array<{ type: 'appointment' | 'suggestion' | 'now', item: any, time: number }> = [];
+
+                        // Add appointments
+                        apps.forEach(app => {
+                          const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
+                          timelineItems.push({ type: 'appointment', item: app, time: appTime });
+                        });
+
+                        // Add suggestions
+                        periodFreeSlots.forEach(slot => {
+                          const slotTime = parseInt(slot.start.split(':')[0]) * 60 + parseInt(slot.start.split(':')[1]);
+                          timelineItems.push({ type: 'suggestion', item: slot, time: slotTime });
+                        });
+
+                        // Add now indicator if in this period
+                        if (showNowInThisPeriod) {
                           const nowTime = now.getHours() * 60 + now.getMinutes();
-                          const result = [];
-                          let nowInserted = false;
-                          
-                          for (const app of apps) {
-                            const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
-                            if (!nowInserted && nowTime < appTime) {
-                              result.push(renderNowIndicator());
-                              nowInserted = true;
-                            }
-                            result.push(renderAppointment(app));
-                          }
-                          
-                          if (!nowInserted) {
-                            result.push(renderNowIndicator());
-                          }
-                          content = result;
+                          timelineItems.push({ type: 'now', item: null, time: nowTime });
                         }
+
+                        // Sort by time
+                        timelineItems.sort((a, b) => a.time - b.time);
+
+                        // Render content
+                        const content = timelineItems.map(({ type, item }) => {
+                          if (type === 'appointment') {
+                            return renderAppointment(item);
+                          } else if (type === 'suggestion') {
+                            return renderSuggestion(item);
+                          } else if (type === 'now') {
+                            return renderNowIndicator();
+                          }
+                          return null;
+                        });
 
                         return (
                           <div key={label} className="py-2">
@@ -3085,163 +3752,329 @@ export default function App() {
             )}
 
             {activeTab === 'pacientes' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                  <div>
-                    <h3 className="text-2xl font-bold text-slate-900">Pacientes</h3>
-                    <p className="text-sm text-slate-500">Gestão e prontuários de pacientes</p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                    <div className="relative w-full sm:w-64">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                      <input 
-                        type="text" 
-                        placeholder="Buscar paciente..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
-                      />
-                    </div>
-                    <button 
-                      onClick={() => {
-                        setExportType('patients');
-                        setIsExportModalOpen(true);
-                      }}
-                      className="bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                    >
-                      <Download size={18} />
-                      Exportar
-                    </button>
-                    <button 
-                      onClick={() => setIsPatientModalOpen(true)}
-                      className="bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
-                    >
-                      <Plus size={18} />
-                      Novo Paciente
-                    </button>
-                  </div>
-                </div>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  {/* Desktop Table View */}
-                  <div className="hidden md:block">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-bold">
-                          <th className="px-6 py-4">Paciente</th>
-                          <th className="px-6 py-4">CPF</th>
-                          <th className="px-6 py-4">Contato</th>
-                          <th className="px-6 py-4">Última Visita</th>
-                          <th className="px-6 py-4 text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {patients
-                          .filter(p => 
-                            (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
-                            (p.cpf && p.cpf.includes(searchTerm)) ||
-                            p.phone.includes(searchTerm)
-                          )
-                          .map((patient) => (
-                            <tr 
-                              key={patient.id} 
-                              onClick={() => openPatientRecord(patient.id)}
-                              className="hover:bg-slate-50 transition-colors group cursor-pointer"
-                            >
-                              <td className="px-6 py-4">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold overflow-hidden border border-primary/20">
-                                    {patient.photo_url ? (
-                                      <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                    ) : (
-                                      (patient.name || '?').charAt(0)
-                                    )}
-                                  </div>
-                                  <span className="font-bold text-slate-800">{patient.name}</span>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-slate-500 font-mono text-sm">{patient.cpf || '---'}</td>
-                              <td className="px-6 py-4">
-                                <p className="text-sm font-medium text-slate-700">{patient.phone}</p>
-                                <p className="text-xs text-slate-400">{patient.email}</p>
-                              </td>
-                              <td className="px-6 py-4 text-slate-500 text-sm">12/02/2024</td>
-                              <td className="px-6 py-4 text-right">
-                                <div className="flex flex-col items-end gap-1">
-                                  <button 
-                                    onClick={() => openPatientRecord(patient.id)}
-                                    className="text-primary font-bold text-sm hover:underline"
-                                  >
-                                    Ver Prontuário
-                                  </button>
-                                  <Link 
-                                    to={`/pacientes/${patient.id}/clinico`}
-                                    className="text-blue-600 font-bold text-sm hover:underline"
-                                  >
-                                    Fluxo Clínico
-                                  </Link>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
+              <div className="space-y-4 pt-10">
+                {(() => {
+                  // ---------- stats ----------
+                  const allMetas = patients.map(p => ({ patient: p, meta: getPatientCardMeta(p) }));
+                  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+                  const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+                  const totalOverdue = allMetas.filter(x => x.meta.attentionStatus.key === 'overdue').length;
+                  const todayAppointments = appointments.filter(app => {
+                    const appDate = new Date(app.start_time);
+                    return appDate >= todayStart && appDate <= todayEnd && app.status !== 'CANCELLED';
+                  });
+                  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                  const freeSlotsToday = getFreeSlots(todayAppointments, '08:00', '18:00', nowHHMM).filter(slot => slot.duration >= 30).length;
+                  const showPatientsFeedback = (message: string) => {
+                    setPatientsInlineFeedback(message);
+                    window.setTimeout(() => setPatientsInlineFeedback(''), 2400);
+                  };
+                  const opportunitiesToday = allMetas.filter(({ patient, meta }) => {
+                    if (meta.attentionStatus.key === 'up-to-date') return false;
+                    return !appointments.some(app =>
+                      app.patient_id === patient.id &&
+                      new Date(app.start_time) >= todayStart &&
+                      new Date(app.start_time) <= todayEnd &&
+                      app.status !== 'CANCELLED'
+                    );
+                  }).length;
+                  const handledToday = appointments.filter(app =>
+                    app.status === 'FINISHED' &&
+                    new Date(app.start_time) >= todayStart &&
+                    new Date(app.start_time) <= todayEnd
+                  ).length;
+                  const opportunityCandidates = allMetas
+                    .filter(({ patient, meta }) => {
+                      if (meta.attentionStatus.key === 'up-to-date') return false;
+                      return !appointments.some(app =>
+                        app.patient_id === patient.id &&
+                        new Date(app.start_time) >= todayStart &&
+                        new Date(app.start_time) <= todayEnd &&
+                        app.status !== 'CANCELLED'
+                      );
+                    })
+                    .sort((a, b) => {
+                      const attentionPriority = { overdue: 0, review: 1, 'up-to-date': 2 } as const;
+                      const attentionDiff =
+                        attentionPriority[a.meta.attentionStatus.key as keyof typeof attentionPriority] -
+                        attentionPriority[b.meta.attentionStatus.key as keyof typeof attentionPriority];
+                      if (attentionDiff !== 0) return attentionDiff;
+                      const dateA = a.meta.lastVisitDate ? a.meta.lastVisitDate.getTime() : 0;
+                      const dateB = b.meta.lastVisitDate ? b.meta.lastVisitDate.getTime() : 0;
+                      return dateA - dateB;
+                    });
 
-                  {/* Mobile Card View */}
-                  <div className="md:hidden divide-y divide-slate-100">
-                    {patients
-                      .filter(p => 
-                        (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
-                        (p.cpf && p.cpf.includes(searchTerm)) ||
-                        p.phone.includes(searchTerm)
-                      )
-                      .map((patient) => (
-                        <div 
-                          key={patient.id} 
-                          onClick={() => openPatientRecord(patient.id)}
-                          className="p-4 active:bg-slate-50 transition-colors"
-                        >
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold">
-                                {(patient.name || '?').charAt(0)}
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-800">{patient.name}</p>
-                                <p className="text-[10px] text-slate-400 font-mono">{patient.cpf || 'Sem CPF'}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Link 
-                                to={`/pacientes/${patient.id}/clinico`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="p-2 bg-blue-50 text-blue-600 rounded-lg"
-                              >
-                                <Activity size={16} />
-                              </Link>
-                              <ChevronRight size={18} className="text-slate-300" />
-                            </div>
+                  // ---------- filtered + sorted card list ----------
+                  const patientCards = patients
+                    .filter(p =>
+                      (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
+                      (p.cpf && p.cpf.includes(searchTerm)) ||
+                      p.phone.includes(searchTerm)
+                    )
+                    .map(patient => ({ patient, meta: getPatientCardMeta(patient) }))
+                    .filter(({ meta }) => {
+                      if (patientListFilter === 'all') return true;
+                      if (patientListFilter === 'in-treatment') return meta.clinicalStatus === 'Em tratamento';
+                      if (patientListFilter === 'review') return meta.clinicalStatus === 'Revisão';
+                      if (patientListFilter === 'overdue') return meta.attentionStatus.key === 'overdue';
+                      return true;
+                    })
+                    .sort((a, b) => {
+                      const attentionPriority = { overdue: 0, review: 1, 'up-to-date': 2 } as const;
+                      const attentionDiff =
+                        attentionPriority[a.meta.attentionStatus.key as keyof typeof attentionPriority] -
+                        attentionPriority[b.meta.attentionStatus.key as keyof typeof attentionPriority];
+                      if (attentionDiff !== 0) return attentionDiff;
+                      const dateA = a.meta.lastVisitDate ? a.meta.lastVisitDate.getTime() : 0;
+                      const dateB = b.meta.lastVisitDate ? b.meta.lastVisitDate.getTime() : 0;
+                      return dateA - dateB;
+                    });
+
+                  const filterChips = [
+                    { key: 'all', label: 'Todos' },
+                    { key: 'in-treatment', label: 'Em tratamento' },
+                    { key: 'review', label: 'Revisão' },
+                    { key: 'overdue', label: 'Atrasados' }
+                  ] as const;
+
+                  const handleScheduleFromCard = (patient: Patient) => {
+                    setPatientActionsToday(prev => new Set([...prev, patient.id]));
+                    openPatientAppointmentModal(patient);
+                  };
+
+                  const handleSummaryOverdueClick = () => {
+                    setPatientListFilter('overdue');
+                    showPatientsFeedback(`${totalOverdue} ${totalOverdue === 1 ? 'paciente precisa' : 'pacientes precisam'} de follow-up.`);
+                  };
+
+                  const handleSummaryOpportunityClick = () => {
+                    const target = opportunityCandidates[0];
+                    if (!target) {
+                      showPatientsFeedback('Nenhuma oportunidade disponível agora.');
+                      return;
+                    }
+                    handleScheduleFromCard(target.patient);
+                    const firstName = (target.patient.name || '').split(' ')[0] || 'Paciente';
+                    showPatientsFeedback(`Sugestão iniciada para ${firstName}.`);
+                  };
+
+                  const handleSummaryProgressClick = () => {
+                    showPatientsFeedback(
+                      handledToday > 0
+                        ? `Excelente ritmo: ${handledToday} ${handledToday === 1 ? 'paciente atendido' : 'pacientes atendidos'} hoje.`
+                        : 'Comece por um paciente em atraso para avançar hoje.'
+                    );
+                  };
+
+                  return (
+                    <>
+                      {/* ── Header ── */}
+                      <div className="space-y-2 mb-1">
+                        <h3 className="text-[24px] font-bold tracking-tight text-[#1C1C1E]">Pacientes</h3>
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                              type="text"
+                              placeholder="Buscar paciente..."
+                              value={searchTerm}
+                              onChange={(e) => setSearchTerm(e.target.value)}
+                              className="w-full h-9 pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-300 focus:border-slate-300 transition-all text-sm"
+                            />
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="bg-slate-50 p-2 rounded-lg">
-                              <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Telefone</p>
-                              <p className="text-slate-700 font-medium">{patient.phone}</p>
-                            </div>
-                            <div className="bg-slate-50 p-2 rounded-lg">
-                              <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Última Visita</p>
-                              <p className="text-slate-700 font-medium">12/02/2024</p>
-                            </div>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsPatientModalOpen(true)}
+                            aria-label="Novo paciente"
+                            className="w-9 h-9 shrink-0 flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/80 transition-colors"
+                          >
+                            <Plus size={18} />
+                          </button>
                         </div>
-                      ))}
-                  </div>
-                </div>
-            </div>
-          )}
+                      </div>
+
+                      {/* ── Action-driven status bar ── */}
+                      {(() => {
+                        const items: React.ReactNode[] = [];
+
+                        // +X hoje — always visible, green + fire when >0
+                        items.push(
+                          <button
+                            key={`hoje-${handledToday}`}
+                            type="button"
+                            onClick={handleSummaryProgressClick}
+                            className={`font-semibold transition-colors ${handledToday > 0 ? 'text-emerald-600 hover:text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
+                            style={{ animation: 'statusPop 150ms ease-out' }}
+                          >
+                            {handledToday > 0 ? `🔥 ${handledToday} hoje` : '0 hoje'}
+                          </button>
+                        );
+
+                        // X oportunidades — only when >0
+                        if (freeSlotsToday > 0) {
+                          items.push(<span key="sep1" className="text-slate-300">•</span>);
+                          items.push(
+                            <button
+                              key={`oport-${freeSlotsToday}`}
+                              type="button"
+                              onClick={handleSummaryOpportunityClick}
+                              className="text-slate-500 hover:text-slate-700 transition-colors"
+                              style={{ animation: 'statusPop 150ms ease-out' }}
+                            >
+                              {freeSlotsToday} {freeSlotsToday === 1 ? 'oportunidade' : 'oportunidades'}
+                            </button>
+                          );
+                        }
+
+                        // X precisam de atenção — only when >0
+                        if (totalOverdue > 0) {
+                          items.push(<span key="sep2" className="text-slate-300">•</span>);
+                          items.push(
+                            <button
+                              key={`atencao-${totalOverdue}`}
+                              type="button"
+                              onClick={handleSummaryOverdueClick}
+                              className="text-rose-500 hover:text-rose-700 transition-colors"
+                              style={{ animation: 'statusPop 150ms ease-out' }}
+                            >
+                              {totalOverdue} {totalOverdue === 1 ? 'precisa de atenção' : 'precisam de atenção'}
+                            </button>
+                          );
+                        }
+
+                        return (
+                          <div className="h-8 flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap px-0.5">
+                            {items}
+                          </div>
+                        );
+                      })()}
+
+                      {patientsInlineFeedback && (
+                        <p className="text-[11px] text-slate-400 px-0.5 -mt-1">{patientsInlineFeedback}</p>
+                      )}
+
+                      {/* ── Filter chips ── */}
+                      <div className="flex flex-wrap gap-2">
+                        {filterChips.map(chip => (
+                          <button
+                            key={chip.key}
+                            type="button"
+                            onClick={() => setPatientListFilter(chip.key)}
+                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                              patientListFilter === chip.key
+                                ? 'bg-primary text-white'
+                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {chip.label}
+                            {chip.key === 'overdue' && totalOverdue > 0 && (
+                              <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
+                                patientListFilter === 'overdue' ? 'bg-white/30 text-white' : 'bg-rose-100 text-rose-600'
+                              }`}>
+                                {totalOverdue}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* ── Card grid ── */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {patientCards.map(({ patient, meta }) => {
+                          const isOverdue = meta.attentionStatus.key === 'overdue';
+                          const isReview  = meta.attentionStatus.key === 'review';
+                          const isScheduled = meta.status === 'em_tratamento' && !!meta.nextVisitDate;
+                          const isActed   = patientActionsToday.has(patient.id);
+                          const urgencyLabel = isScheduled
+                            ? `Próxima consulta · ${meta.nextVisitLabel || 'Agendada'}`
+                            : isOverdue
+                            ? `Sem visita · ${meta.lastVisitLabel}`
+                            : isReview
+                              ? `Revisão próxima · ${meta.lastVisitLabel}`
+                              : `Em dia · ${meta.lastVisitLabel}`;
+                          return (
+                            <div
+                              key={patient.id}
+                              className={`flex items-center gap-4 bg-white rounded-2xl border px-4 py-3.5 hover:shadow-sm transition-all ${
+                                isOverdue ? 'border-rose-100' : 'border-slate-100 hover:border-slate-200'
+                              }`}
+                            >
+                              {/* Avatar */}
+                              <button
+                                type="button"
+                                onClick={() => openPatientRecord(patient.id)}
+                                className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold text-sm overflow-hidden border border-primary/20 shrink-0"
+                              >
+                                {patient.photo_url ? (
+                                  <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  (patient.name || '?').charAt(0)
+                                )}
+                              </button>
+
+                              {/* Info */}
+                              <button
+                                type="button"
+                                onClick={() => openPatientRecord(patient.id)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <p className="text-[15px] font-semibold text-slate-900 truncate leading-tight">{patient.name}</p>
+                                <p className={`text-xs mt-0.5 truncate ${
+                                  isScheduled ? 'text-sky-600' : isOverdue ? 'text-rose-500' : isReview ? 'text-amber-500' : 'text-slate-400'
+                                }`}>
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${meta.attentionStatus.dot}`} />
+                                  {urgencyLabel}
+                                </p>
+                              </button>
+
+                              {/* Icon actions */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  title={isActed ? 'Agendamento iniciado' : 'Agendar consulta'}
+                                  onClick={() => handleScheduleFromCard(patient)}
+                                  className={`w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
+                                    isActed
+                                      ? 'text-emerald-600 bg-emerald-50'
+                                      : 'text-slate-400 hover:text-primary hover:bg-primary/8'
+                                  }`}
+                                >
+                                  {isActed ? <Check size={16} /> : <Calendar size={16} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Contatar via WhatsApp"
+                                  onClick={() => contactPatientOnWhatsApp(patient)}
+                                  className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                                >
+                                  <MessageCircle size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {patientCards.length === 0 && (
+                          <div className="col-span-full bg-white rounded-2xl border border-slate-100 shadow-sm p-10 text-center">
+                            <Users size={36} className="mx-auto text-slate-200 mb-3" />
+                            <p className="text-slate-600 font-medium">Nenhum paciente encontrado para este filtro.</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
 
             {activeTab === 'prontuario' && selectedPatient && (
-              <div className="space-y-8">
-                <div className="flex items-center gap-3 md:gap-4 mb-6">
+              <div className="space-y-8 pt-10">
+                <div className="space-y-1.5 mb-6">
+                  <h3 className="text-[28px] font-bold tracking-tight text-[#1C1C1E] truncate">Prontuário: {selectedPatient.name}</h3>
+                  <p className="text-[17px] font-medium text-[#8E8E93]">Linha clínica e decisões do paciente</p>
+                </div>
+
+                <div className="flex items-center gap-3 md:gap-4">
                   <button 
                     onClick={() => setActiveTab('pacientes')}
                     className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
@@ -3249,13 +4082,61 @@ export default function App() {
                     <ChevronRight size={20} className="rotate-180 md:hidden" />
                     <ChevronRight size={24} className="rotate-180 hidden md:block" />
                   </button>
-                  <h3 className="text-xl md:text-2xl font-bold text-slate-900 truncate">Prontuário: {selectedPatient.name}</h3>
+                  <span className="text-sm font-medium text-slate-500">Voltar para pacientes</span>
+                </div>
+
+                {(() => {
+                  const meta = getPatientCardMeta(selectedPatient);
+                  const pendingProceduresCount = (selectedPatient.treatmentPlan || []).filter(
+                    plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO'
+                  ).length;
+
+                  return (
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 md:gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Status clínico</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.clinicalStatus}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Próxima consulta</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.nextVisitLabel || 'Sem consulta agendada'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Procedimentos pendentes</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{pendingProceduresCount}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
+                  <div className="flex flex-col sm:flex-row gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatientTab('evolucao');
+                        setIsEvolutionFormOpen(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition-colors w-full sm:w-auto"
+                    >
+                      Nova evolução
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowTreatmentPlanSummary(true)}
+                      className="px-4 py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors w-full sm:w-auto"
+                    >
+                      Ver plano de tratamento
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   {/* Sidebar: Patient Info & Anamnesis */}
-                  <div className="space-y-8">
-                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+                  <div className="space-y-4 flex flex-col order-2 lg:order-2">
+                    <div className="order-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
                       <div className="flex flex-col items-center mb-6">
                         <div className="relative group">
                           <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-primary transition-all">
@@ -3294,72 +4175,92 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <AlertCircle size={18} className="text-rose-500" />
-                        Anamnese
-                      </h4>
-                      <form onSubmit={saveAnamnesis} className="space-y-4">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={3}
-                            value={selectedPatient.anamnesis?.medical_history || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                allergies: '', 
-                                medications: '', 
-                                ...selectedPatient.anamnesis, 
-                                medical_history: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={2}
-                            value={selectedPatient.anamnesis?.allergies || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                medical_history: '', 
-                                medications: '', 
-                                ...selectedPatient.anamnesis, 
-                                allergies: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={2}
-                            value={selectedPatient.anamnesis?.medications || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                medical_history: '', 
-                                allergies: '', 
-                                ...selectedPatient.anamnesis, 
-                                medications: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">
-                          Salvar Anamnese
+                    <div className="order-1 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <AlertCircle size={18} className="text-rose-500" />
+                          Anamnese
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setIsAnamnesisEditing(prev => !prev)}
+                          className="text-[11px] font-semibold text-primary hover:underline"
+                        >
+                          {isAnamnesisEditing ? 'Fechar edição' : 'Editar'}
                         </button>
-                      </form>
+                      </div>
+
+                      {!isAnamnesisEditing && (
+                        <ul className="space-y-2 text-sm text-slate-700">
+                          <li className="leading-relaxed"><span className="text-slate-400">• Histórico:</span> {selectedPatient.anamnesis?.medical_history || 'Sem registros relevantes'}</li>
+                          <li className="leading-relaxed"><span className="text-slate-400">• Alergias:</span> {selectedPatient.anamnesis?.allergies || 'Nenhuma alergia registrada'}</li>
+                          <li className="leading-relaxed"><span className="text-slate-400">• Medicações:</span> {selectedPatient.anamnesis?.medications || 'Sem medicação em uso registrada'}</li>
+                        </ul>
+                      )}
+
+                      {isAnamnesisEditing && (
+                        <form onSubmit={saveAnamnesis} className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={3}
+                              value={selectedPatient.anamnesis?.medical_history || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  allergies: '', 
+                                  medications: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  medical_history: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={2}
+                              value={selectedPatient.anamnesis?.allergies || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  medical_history: '', 
+                                  medications: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  allergies: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={2}
+                              value={selectedPatient.anamnesis?.medications || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  medical_history: '', 
+                                  allergies: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  medications: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">
+                            Salvar Anamnese
+                          </button>
+                        </form>
+                      )}
                     </div>
                   </div>
 
                   {/* Main: Evolution & Odontogram Placeholder */}
-                  <div className="lg:col-span-2 space-y-8">
+                  <div className="lg:col-span-2 space-y-8 order-1 lg:order-1">
                     {/* Tabs for Patient Record */}
                     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                       <div className="flex border-b border-slate-100">
@@ -3453,30 +4354,46 @@ export default function App() {
                               )}
                             </AnimatePresence>
 
-                            <div className="space-y-6">
-                              {selectedPatient.evolution && selectedPatient.evolution.length > 0 ? (
-                                selectedPatient.evolution.map((evo) => (
-                                  <div key={evo.id} className="relative pl-6 border-l-2 border-slate-100 pb-6 last:pb-0">
-                                    <div className="absolute -left-[9px] top-0 w-4 h-4 bg-white border-2 border-primary rounded-full" />
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                                      <div className="flex justify-between items-start mb-2">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase">
-                                          {formatDate(evo.date)}
-                                        </span>
-                                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                                          {evo.procedure_performed}
-                                        </span>
-                                      </div>
-                                      <p className="text-sm text-slate-700 leading-relaxed">{evo.notes}</p>
+                            <div className="space-y-5">
+                              {(() => {
+                                const evolutionEntries = [...(selectedPatient.evolution || [])]
+                                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                                if (evolutionEntries.length === 0) {
+                                  return (
+                                    <div className="text-center py-12 text-slate-400">
+                                      <ClipboardList size={48} className="mx-auto mb-4 opacity-20" />
+                                      <p>Nenhum registro de evolução clínica.</p>
+                                    </div>
+                                  );
+                                }
+
+                                const groups = evolutionEntries.reduce((acc, evo) => {
+                                  const key = getRelativeDayLabel(evo.date);
+                                  if (!acc[key]) acc[key] = [];
+                                  acc[key].push(evo);
+                                  return acc;
+                                }, {} as Record<string, typeof evolutionEntries>);
+
+                                return Object.entries(groups).map(([groupLabel, entries]) => (
+                                  <div key={groupLabel} className="space-y-2">
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">{groupLabel}</p>
+                                    <div className="space-y-2">
+                                      {entries.map(evo => (
+                                        <div key={evo.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                          <div className="flex justify-between items-start gap-2 mb-1.5">
+                                            <span className="text-[10px] text-slate-400 font-semibold uppercase">{formatDate(evo.date)}</span>
+                                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                                              {evo.procedure_performed || 'Registro'}
+                                            </span>
+                                          </div>
+                                          <p className="text-sm text-slate-700 leading-relaxed">{evo.notes || 'Sem observações'}</p>
+                                        </div>
+                                      ))}
                                     </div>
                                   </div>
-                                ))
-                              ) : (
-                                <div className="text-center py-12 text-slate-400">
-                                  <ClipboardList size={48} className="mx-auto mb-4 opacity-20" />
-                                  <p>Nenhum registro de evolução clínica.</p>
-                                </div>
-                              )}
+                                ));
+                              })()}
                             </div>
                           </>
                         ) : selectedPatientTab === 'imagens' ? (
@@ -3682,10 +4599,45 @@ export default function App() {
 
                     {/* Odontogram */}
                     <div className="bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-6">
-                        <h4 className="text-xl font-bold text-slate-800">Odontograma Interativo</h4>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Clique no dente para alterar o status</span>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
+                        <div>
+                          <h4 className="text-xl font-bold text-slate-800">Odontograma Interativo</h4>
+                          <p className="text-sm text-slate-500 mt-1">
+                            {Object.values(selectedPatient.odontogram || {}).filter((tooth: any) => {
+                              const status = (tooth?.status || '').toLowerCase();
+                              return !!status && !['normal', 'saudavel', 'saudável', 'healthy'].includes(status);
+                            }).length} dentes com problemas
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <button
+                            type="button"
+                            onClick={() => setShowTreatmentPlanSummary(prev => !prev)}
+                            className="px-3 py-2 rounded-xl text-xs font-semibold text-primary border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors w-full sm:w-auto"
+                          >
+                            Ver plano de tratamento
+                          </button>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:inline">Clique no dente</span>
+                        </div>
                       </div>
+
+                      {showTreatmentPlanSummary && (
+                        <div className="mb-5 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                          {(selectedPatient.treatmentPlan || []).filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO').length > 0 ? (
+                            <ul className="space-y-1.5 text-sm text-slate-700">
+                              {(selectedPatient.treatmentPlan || [])
+                                .filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO')
+                                .slice(0, 5)
+                                .map(plan => (
+                                  <li key={plan.id} className="leading-relaxed">• {plan.procedure} {plan.tooth_number ? `(dente ${plan.tooth_number})` : ''}</li>
+                                ))}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-slate-500">Nenhum procedimento pendente no plano de tratamento.</p>
+                          )}
+                        </div>
+                      )}
+
                       <Odontogram 
                         data={selectedPatient.odontogram || {}} 
                         history={selectedPatient.toothHistory || []}

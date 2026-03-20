@@ -6,31 +6,63 @@ interface DashboardProps {
   user: any;
   patients: any[];
   nextAppointments: any[];
-  todayAppointmentsCount: number;
+  todayAppointmentsTotalCount: number;
+  todayAppointmentsRemainingCount: number;
+  tomorrowUnconfirmedCount: number;
   todayRevenue: number;
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   openPatientRecord: (id: number) => void;
   setIsModalOpen: (open: boolean) => void;
   setActiveTab: (tab: any) => void;
+  sendReminder: (appointment: any) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
   user,
   nextAppointments = [],
-  todayAppointmentsCount = 0,
+  todayAppointmentsTotalCount = 0,
+  todayAppointmentsRemainingCount = 0,
+  tomorrowUnconfirmedCount = 0,
   todayRevenue = 0,
   openPatientRecord,
-  setActiveTab
+  setIsModalOpen,
+  setActiveTab,
+  sendReminder
 }) => {
   const nextPatient = nextAppointments[0];
   const otherAppointments = nextAppointments.slice(1, 5);
 
   // Dynamic status message logic
   const getStatusMessage = () => {
-    if (todayAppointmentsCount === 0) return "Agenda tranquila hoje";
-    if (todayAppointmentsCount === 1) return "Último paciente do dia";
-    return `Faltam ${todayAppointmentsCount} atendimentos hoje`;
+    const count = todayAppointmentsRemainingCount;
+    if (count === 0) return "Agenda tranquila hoje";
+    if (count === 1) return "Último paciente do dia";
+    return `Faltam ${count} atendimentos hoje`;
+  };
+
+  const getTimeGreeting = () => {
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour < 12) return { text: 'Bom dia', emoji: '☀️' };
+    if (hour < 18) return { text: 'Boa tarde', emoji: '👋' };
+    return { text: 'Boa noite', emoji: '🌙' };
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'CONFIRMED':
+        return { label: 'Confirmado', className: 'bg-[#F0F9F4] text-[#2B8A56]' };
+      case 'IN_PROGRESS':
+        return { label: 'Em atendimento', className: 'bg-[#EAF4FF] text-[#1E6ED6]' };
+      case 'FINISHED':
+        return { label: 'Finalizado', className: 'bg-[#F3F3F5] text-[#6B7280]' };
+      case 'CANCELLED':
+        return { label: 'Cancelado', className: 'bg-[#FDECEF] text-[#C53030]' };
+      case 'SCHEDULED':
+      default:
+        return { label: 'Agendado', className: 'bg-[#F9FAFB] text-[#6B7280]' };
+    }
   };
 
   const getGreetingName = () => {
@@ -44,7 +76,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* 1. HEADER */}
       <header className="space-y-1.5 px-2">
         <h1 className="text-[28px] font-bold tracking-tight text-[#1C1C1E]">
-          Boa tarde, {getGreetingName()}
+          {getTimeGreeting().text}, {getGreetingName()} {getTimeGreeting().emoji}
         </h1>
         <p className="text-[17px] font-medium text-[#8E8E93]">
           {getStatusMessage()}
@@ -65,9 +97,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   {nextPatient.patient_name}
                 </h2>
                 <div className="flex items-center gap-2">
-                  <span className="px-3.5 py-1.5 rounded-full bg-[#F0F9F4] text-[#2B8A56] text-[11px] font-bold uppercase tracking-wider">
-                    Confirmado
-                  </span>
+                  {(() => {
+                    const badge = getStatusBadge(nextPatient.status);
+                    return (
+                      <span className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${badge.className}`}>
+                        {badge.label}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
               <div className="text-right shrink-0 pt-2">
@@ -103,6 +140,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <motion.button 
                   whileTap={{ scale: 0.98, opacity: 0.9 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
+                  onClick={() => sendReminder(nextPatient)}
                   className="flex items-center justify-center gap-2.5 px-6 py-[18px] rounded-[26px] border border-[#C6C6C8]/50 text-[15px] font-bold text-[#1C1C1E] bg-[#F9F9FB] transition-all"
                 >
                   <MessageCircle size={18} className="text-primary" />
@@ -111,6 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <motion.button 
                   whileTap={{ scale: 0.98, opacity: 0.9 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
+                  onClick={() => setActiveTab('agenda')}
                   className="flex items-center justify-center gap-2.5 py-[18px] rounded-[26px] text-[15px] font-bold text-[#8E8E93] hover:text-[#1C1C1E] transition-all"
                 >
                   Reagendar
@@ -175,12 +214,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="flex flex-col gap-0.5">
               <h4 className="text-[17px] font-bold text-[#1C1C1E]">Lembretes de amanhã</h4>
-              <p className="text-[14px] text-[#8E8E93] font-medium">8 pacientes para confirmar</p>
+              <p className="text-[14px] text-[#8E8E93] font-medium">{tomorrowUnconfirmedCount} paciente{tomorrowUnconfirmedCount === 1 ? '' : 's'} para confirmar</p>
             </div>
           </div>
           <motion.button 
             whileTap={{ scale: 0.97, opacity: 0.9 }}
             transition={{ duration: 0.2 }}
+            onClick={() => setActiveTab('agenda')}
             className="bg-primary text-white px-8 py-4 rounded-[999px] text-[14px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.1)] w-full sm:w-auto"
           >
             Enviar lembretes
