@@ -499,6 +499,7 @@ export default function App() {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [patientManagementFilter, setPatientManagementFilter] = useState<'ALL' | 'IN_TREATMENT' | 'REVIEW' | 'OVERDUE'>('ALL');
   const [dentistSearchTerm, setDentistSearchTerm] = useState('');
   const [dentistStatusFilter, setDentistStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -1273,6 +1274,242 @@ export default function App() {
     setIsModalOpen(true);
   };
 
+  const openAppointmentModalForPatient = (patient: Patient) => {
+    const dentist_id = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
+
+    setEditingAppointment(null);
+    setSelectedDate(new Date());
+    setNewAppointment({
+      patient_id: patient.id.toString(),
+      dentist_id: dentist_id || '',
+      date: '',
+      time: '',
+      duration: '',
+      notes: ''
+    });
+    setIsModalOpen(true);
+  };
+
+  const getWhatsappUrl = (phone: string) => {
+    const digits = (phone || '').replace(/\D/g, '');
+    if (!digits) return '';
+    const normalizedPhone = digits.startsWith('55') ? digits : `55${digits}`;
+    return `https://wa.me/${normalizedPhone}`;
+  };
+
+  const formatTimeSinceLastVisit = (lastVisit: Date | null) => {
+    if (!lastVisit) return 'Sem visita registrada';
+    const diffMs = now.getTime() - lastVisit.getTime();
+    const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+    if (diffDays === 0) return 'hoje';
+    if (diffDays === 1) return '1 dia atrás';
+    if (diffDays < 30) return `${diffDays} dias atrás`;
+
+    const diffMonths = Math.floor(diffDays / 30);
+    if (diffMonths === 1) return '1 mês atrás';
+    if (diffMonths < 12) return `${diffMonths} meses atrás`;
+
+    const diffYears = Math.floor(diffMonths / 12);
+    return diffYears === 1 ? '1 ano atrás' : `${diffYears} anos atrás`;
+  };
+
+  const getPatientManagementMeta = (patient: Patient) => {
+    const patientAppointments = appointments
+      .filter(a => a.patient_id === patient.id)
+      .filter(a => {
+        const status = String(a.status || '').toUpperCase();
+        return status !== 'CANCELLED' && status !== 'NO_SHOW';
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const nextVisit = patientAppointments.find(a => {
+      const visitDate = new Date(a.start_time);
+      visitDate.setHours(0, 0, 0, 0);
+      return visitDate >= startOfToday;
+    });
+    const nextVisitDate = nextVisit ? new Date(nextVisit.start_time) : null;
+
+    const pastAppointments = patientAppointments
+      .filter(a => new Date(a.start_time) <= now)
+      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+    const lastVisitDate = pastAppointments.length > 0 ? new Date(pastAppointments[0].start_time) : null;
+
+    const daysSinceLastVisit = lastVisitDate
+      ? Math.floor((startOfToday.getTime() - new Date(lastVisitDate.getFullYear(), lastVisitDate.getMonth(), lastVisitDate.getDate()).getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    let priorityStatus: 'EM_TRATAMENTO' | 'ATRASADO' | 'REVISAO' | 'EM_DIA' = 'EM_DIA';
+
+    // 1. EM TRATAMENTO (highest priority): nextVisitDate exists AND today <= nextVisitDate
+    if (nextVisitDate) {
+      const normalizedNextVisit = new Date(nextVisitDate);
+      normalizedNextVisit.setHours(0, 0, 0, 0);
+      if (startOfToday <= normalizedNextVisit) {
+        priorityStatus = 'EM_TRATAMENTO';
+      }
+    } else if (daysSinceLastVisit !== null) {
+      // 2. ATRASADO: daysSinceLastVisit > 180
+      if (daysSinceLastVisit > 180) {
+        priorityStatus = 'ATRASADO';
+      }
+      // 3. REVISAO: daysSinceLastVisit > 90
+      else if (daysSinceLastVisit > 90) {
+        priorityStatus = 'REVISAO';
+      }
+      // 4. EM DIA: otherwise
+      else {
+        priorityStatus = 'EM_DIA';
+      }
+    }
+
+    const clinicalStatus: 'IN_TREATMENT' | 'REVIEW' | 'INACTIVE' =
+      priorityStatus === 'EM_TRATAMENTO'
+        ? 'IN_TREATMENT'
+        : priorityStatus === 'REVISAO'
+          ? 'REVIEW'
+          : priorityStatus === 'ATRASADO'
+            ? 'INACTIVE'
+            : 'REVIEW';
+
+    const indicator: 'OVERDUE' | 'UPCOMING_REVIEW' | 'UP_TO_DATE' =
+      priorityStatus === 'ATRASADO'
+        ? 'OVERDUE'
+        : priorityStatus === 'REVISAO'
+          ? 'UPCOMING_REVIEW'
+          : 'UP_TO_DATE';
+
+    return {
+      priorityStatus,
+      nextVisitDate,
+      lastVisitDate,
+      daysSinceLastVisit,
+      clinicalStatus,
+      indicator,
+      timeSinceLastVisit: formatTimeSinceLastVisit(lastVisitDate)
+    };
+  };
+
+  const patientCardsData = patients
+    .filter(p =>
+      (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
+      (p.cpf && p.cpf.includes(searchTerm)) ||
+      (p.phone || '').includes(searchTerm)
+    )
+    .map(patient => ({
+      patient,
+      meta: getPatientManagementMeta(patient)
+    }))
+    .filter(item => {
+      if (patientManagementFilter === 'ALL') return true;
+      if (patientManagementFilter === 'IN_TREATMENT') return item.meta.clinicalStatus === 'IN_TREATMENT';
+      if (patientManagementFilter === 'REVIEW') return item.meta.clinicalStatus === 'REVIEW';
+      if (patientManagementFilter === 'OVERDUE') return item.meta.indicator === 'OVERDUE';
+      return true;
+    });
+
+  const attentionPatientsCount = patientCardsData.filter(item => item.meta.indicator === 'OVERDUE').length;
+
+  const resolveWorkingHours = (): WorkingHoursRange => {
+    const profileAny = profile as any;
+    const startCandidates = [
+      profileAny?.working_hours_start,
+      profileAny?.workingHoursStart,
+      profileAny?.agenda_start,
+      profileAny?.agendaStart
+    ];
+    const endCandidates = [
+      profileAny?.working_hours_end,
+      profileAny?.workingHoursEnd,
+      profileAny?.agenda_end,
+      profileAny?.agendaEnd
+    ];
+
+    const validTime = (value: any) => typeof value === 'string' && /^([01]?\d|2[0-3]):([0-5]\d)$/.test(value);
+
+    const start = startCandidates.find(validTime) || '08:00';
+    const end = endCandidates.find(validTime) || '18:00';
+
+    return { start, end };
+  };
+
+  const todayOpportunities = calculateDailyOpportunities({
+    appointments,
+    date: now,
+    workingHours: resolveWorkingHours(),
+    minSlotMinutes: 30,
+    nowRef: now
+  });
+
+  const opportunitiesCount = todayOpportunities.count;
+  const opportunitySlots = todayOpportunities.slots;
+
+  const newPatientsTodayCount = patientCardsData.filter(({ patient }) => {
+    if (!patient.created_at) return false;
+    return new Date(patient.created_at).toDateString() === now.toDateString();
+  }).length;
+
+  const [highlightTodayMetric, setHighlightTodayMetric] = useState(false);
+  const hasInitializedTodayMetricRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasInitializedTodayMetricRef.current) {
+      hasInitializedTodayMetricRef.current = true;
+      return;
+    }
+
+    setHighlightTodayMetric(true);
+    const timeout = setTimeout(() => setHighlightTodayMetric(false), 900);
+    return () => clearTimeout(timeout);
+  }, [newPatientsTodayCount]);
+
+  const openSuggestedScheduling = () => {
+    if (opportunitySlots.length > 0) {
+      const suggested = opportunitySlots[0];
+      setActiveTab('agenda');
+      setAgendaFocusMode(false);
+      setAgendaViewMode('day');
+      setSelectedDate(new Date(suggested.startTime));
+      setSuggestedSlot({
+        date: suggested.startTime,
+        duration: suggested.duration,
+        procedure: getProcedureByDuration(suggested.duration)
+      });
+      return;
+    }
+    setActiveTab('agenda');
+  };
+
+  const statusBarItems = [
+    ...(attentionPatientsCount > 0
+      ? [{
+          id: 'attention',
+          text: `${attentionPatientsCount} precisam de atenção`,
+          onClick: () => setPatientManagementFilter('OVERDUE'),
+          tone: 'text-rose-600'
+        }]
+      : []),
+    ...(opportunitiesCount > 0
+      ? [{
+          id: 'opportunities',
+          text: `${opportunitiesCount} oportunidades`,
+          onClick: openSuggestedScheduling,
+          tone: 'text-slate-500'
+        }]
+      : []),
+    ...(newPatientsTodayCount > 0
+      ? [{
+          id: 'today',
+          text: `🔥 ${newPatientsTodayCount} hoje`,
+          onClick: () => setActiveTab('dashboard'),
+          tone: highlightTodayMetric ? 'text-emerald-600' : 'text-slate-500'
+        }]
+      : [])
+  ];
+
   const formatProcedure = (input: string) => {
     const normalized = (input || '').trim();
     if (!normalized) return '';
@@ -1343,80 +1580,141 @@ export default function App() {
     }
   };
 
-  const findAvailableSlots = (date: Date, workingHours = { start: 8, end: 18 }) => {
-    const dayAppointments = appointments
+  type WorkingHoursRange = { start: string; end: string };
+  type FreeSlot = { startTime: Date; endTime: Date; duration: number; procedure?: string };
+  type TimeRangeInput = { start: string | Date; end: string | Date };
+
+  function parseTimeToMinutes(time: string) {
+    const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((time || '').trim());
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return (hours * 60) + minutes;
+  }
+
+  function calculateDailyOpportunities({
+    appointments,
+    date,
+    workingHours,
+    minSlotMinutes = 30,
+    nowRef,
+    blockedPeriods = []
+  }: {
+    appointments: Appointment[];
+    date: Date;
+    workingHours: WorkingHoursRange;
+    minSlotMinutes?: number;
+    nowRef?: Date;
+    blockedPeriods?: TimeRangeInput[];
+  }): { count: number; slots: FreeSlot[] } {
+    const startMinutes = parseTimeToMinutes(workingHours.start);
+    const endMinutes = parseTimeToMinutes(workingHours.end);
+
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+      return { count: 0, slots: [] };
+    }
+
+    const workStart = new Date(date);
+    workStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+    const workEnd = new Date(date);
+    workEnd.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
+
+    const isToday = date.toDateString() === (nowRef || new Date()).toDateString();
+    const effectiveStart = isToday ? new Date(Math.max(workStart.getTime(), (nowRef || new Date()).getTime())) : workStart;
+
+    if (effectiveStart >= workEnd) {
+      return { count: 0, slots: [] };
+    }
+
+    const busyRanges: Array<{ start: Date; end: Date }> = [];
+
+    appointments
       .filter(a => {
-        const appDate = new Date(a.start_time);
-        return appDate.toDateString() === date.toDateString();
+        const appStart = new Date(a.start_time);
+        const appEnd = new Date(a.end_time);
+        const status = String(a.status || '').toUpperCase();
+
+        if (appStart.toDateString() !== date.toDateString()) return false;
+        if (status === 'CANCELLED' || status === 'NO_SHOW') return false;
+        return appEnd > workStart && appStart < workEnd;
       })
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-
-    const slots: Array<{ startTime: Date; endTime: Date; duration: number; procedure: string }> = [];
-
-    // First slot: from working hours start to first appointment
-    if (dayAppointments.length === 0) {
-      const startTime = new Date(date);
-      startTime.setHours(workingHours.start, 0, 0, 0);
-      const endTime = new Date(date);
-      endTime.setHours(workingHours.end, 0, 0, 0);
-      const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-      slots.push({
-        startTime,
-        endTime,
-        duration,
-        procedure: getProcedureByDuration(duration)
+      .forEach(a => {
+        const start = new Date(Math.max(new Date(a.start_time).getTime(), effectiveStart.getTime()));
+        const end = new Date(Math.min(new Date(a.end_time).getTime(), workEnd.getTime()));
+        if (end > start) busyRanges.push({ start, end });
       });
-    } else {
-      // First slot: before first appointment
-      const firstAppStart = new Date(dayAppointments[0].start_time);
-      if (firstAppStart.getHours() > workingHours.start) {
-        const startTime = new Date(date);
-        startTime.setHours(workingHours.start, 0, 0, 0);
-        const duration = (firstAppStart.getTime() - startTime.getTime()) / (1000 * 60);
-        if (duration >= 15) {
-          slots.push({
-            startTime,
-            endTime: firstAppStart,
-            duration,
-            procedure: getProcedureByDuration(duration)
-          });
+
+    blockedPeriods.forEach(period => {
+      const periodStart = period.start instanceof Date ? period.start : new Date(period.start);
+      const periodEnd = period.end instanceof Date ? period.end : new Date(period.end);
+
+      if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) return;
+      if (periodStart.toDateString() !== date.toDateString()) return;
+
+      const start = new Date(Math.max(periodStart.getTime(), effectiveStart.getTime()));
+      const end = new Date(Math.min(periodEnd.getTime(), workEnd.getTime()));
+      if (end > start) busyRanges.push({ start, end });
+    });
+
+    const sortedBusy = busyRanges.sort((a, b) => a.start.getTime() - b.start.getTime());
+    const mergedBusy: Array<{ start: Date; end: Date }> = [];
+
+    sortedBusy.forEach(range => {
+      const last = mergedBusy[mergedBusy.length - 1];
+      if (!last || range.start > last.end) {
+        mergedBusy.push({ start: new Date(range.start), end: new Date(range.end) });
+        return;
+      }
+      if (range.end > last.end) {
+        last.end = new Date(range.end);
+      }
+    });
+
+    const slots: FreeSlot[] = [];
+    let cursor = new Date(effectiveStart);
+
+    mergedBusy.forEach(range => {
+      if (range.start > cursor) {
+        const duration = (range.start.getTime() - cursor.getTime()) / (1000 * 60);
+        if (duration >= minSlotMinutes) {
+          slots.push({ startTime: new Date(cursor), endTime: new Date(range.start), duration });
         }
       }
-
-      // Slots between appointments
-      for (let i = 0; i < dayAppointments.length - 1; i++) {
-        const currentAppEnd = new Date(dayAppointments[i].end_time);
-        const nextAppStart = new Date(dayAppointments[i + 1].start_time);
-        const duration = (nextAppStart.getTime() - currentAppEnd.getTime()) / (1000 * 60);
-
-        if (duration >= 15) {
-          slots.push({
-            startTime: currentAppEnd,
-            endTime: nextAppStart,
-            duration,
-            procedure: getProcedureByDuration(duration)
-          });
-        }
+      if (range.end > cursor) {
+        cursor = new Date(range.end);
       }
+    });
 
-      // Last slot: after last appointment
-      const lastAppEnd = new Date(dayAppointments[dayAppointments.length - 1].end_time);
-      if (lastAppEnd.getHours() < workingHours.end) {
-        const endTime = new Date(date);
-        endTime.setHours(workingHours.end, 0, 0, 0);
-        const duration = (endTime.getTime() - lastAppEnd.getTime()) / (1000 * 60);
-        if (duration >= 15) {
-          slots.push({
-            startTime: lastAppEnd,
-            endTime,
-            duration,
-            procedure: getProcedureByDuration(duration)
-          });
-        }
+    if (cursor < workEnd) {
+      const duration = (workEnd.getTime() - cursor.getTime()) / (1000 * 60);
+      if (duration >= minSlotMinutes) {
+        slots.push({ startTime: new Date(cursor), endTime: new Date(workEnd), duration });
       }
     }
 
-    return slots.sort((a, b) => b.duration - a.duration); // Sort by duration (biggest first)
+    return { count: slots.length, slots };
+  }
+
+  const findAvailableSlots = (date: Date, workingHours = { start: 8, end: 18 }) => {
+    const workingRange: WorkingHoursRange = {
+      start: `${String(workingHours.start).padStart(2, '0')}:00`,
+      end: `${String(workingHours.end).padStart(2, '0')}:00`
+    };
+
+    const result = calculateDailyOpportunities({
+      appointments,
+      date,
+      workingHours: workingRange,
+      minSlotMinutes: 15,
+      nowRef: now
+    });
+
+    return result.slots
+      .map(slot => ({
+        ...slot,
+        procedure: getProcedureByDuration(slot.duration)
+      }))
+      .sort((a, b) => b.duration - a.duration);
   };
 
   const handleCreateAppointment = async (e: React.FormEvent) => {
@@ -3207,154 +3505,159 @@ export default function App() {
 
             {activeTab === 'pacientes' && (
               <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                <div className="space-y-1.5 mb-2">
                   <div>
-                    <h3 className="text-2xl font-bold text-slate-900">Pacientes</h3>
-                    <p className="text-sm text-slate-500">Gestão e prontuários de pacientes</p>
+                    <h3 className="text-[22px] font-bold tracking-tight text-slate-900">Pacientes</h3>
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                    <div className="relative w-full sm:w-64">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                      <input 
-                        type="text" 
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input
+                        type="text"
                         placeholder="Buscar paciente..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
+                        className="w-full h-10 pl-9 pr-3 py-2 bg-slate-50/90 rounded-xl border border-transparent focus:outline-none focus:border-slate-200 focus:bg-white text-sm text-slate-700 placeholder:text-slate-400 transition-colors"
                       />
                     </div>
-                    <button 
-                      onClick={() => {
-                        setExportType('patients');
-                        setIsExportModalOpen(true);
-                      }}
-                      className="bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                    >
-                      <Download size={18} />
-                      Exportar
-                    </button>
-                    <button 
+
+                    <button
                       onClick={() => setIsPatientModalOpen(true)}
-                      className="bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 w-full sm:w-auto"
+                      className="w-9 h-9 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100/80 transition-colors flex items-center justify-center shrink-0"
+                      title="Novo paciente"
+                      aria-label="Novo paciente"
                     >
-                      <Plus size={18} />
-                      Novo Paciente
+                      <Plus size={17} />
                     </button>
                   </div>
                 </div>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  {/* Desktop Table View */}
-                  <div className="hidden md:block">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-bold">
-                          <th className="px-6 py-4">Paciente</th>
-                          <th className="px-6 py-4">CPF</th>
-                          <th className="px-6 py-4">Contato</th>
-                          <th className="px-6 py-4">Última Visita</th>
-                          <th className="px-6 py-4 text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {patients
-                          .filter(p => 
-                            (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
-                            (p.cpf && p.cpf.includes(searchTerm)) ||
-                            p.phone.includes(searchTerm)
-                          )
-                          .map((patient) => (
-                            <tr 
-                              key={patient.id} 
-                              onClick={() => openPatientRecord(patient.id)}
-                              className="hover:bg-slate-50 transition-colors group cursor-pointer"
-                            >
-                              <td className="px-6 py-4">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold overflow-hidden border border-primary/20">
-                                    {patient.photo_url ? (
-                                      <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                    ) : (
-                                      (patient.name || '?').charAt(0)
-                                    )}
-                                  </div>
-                                  <span className="font-bold text-slate-800">{patient.name}</span>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-slate-500 font-mono text-sm">{patient.cpf || '---'}</td>
-                              <td className="px-6 py-4">
-                                <p className="text-sm font-medium text-slate-700">{patient.phone}</p>
-                                <p className="text-xs text-slate-400">{patient.email}</p>
-                              </td>
-                              <td className="px-6 py-4 text-slate-500 text-sm">12/02/2024</td>
-                              <td className="px-6 py-4 text-right">
-                                <div className="flex flex-col items-end gap-1">
-                                  <button 
-                                    onClick={() => openPatientRecord(patient.id)}
-                                    className="text-primary font-bold text-sm hover:underline"
-                                  >
-                                    Ver Prontuário
-                                  </button>
-                                  <Link 
-                                    to={`/pacientes/${patient.id}/clinico`}
-                                    className="text-blue-600 font-bold text-sm hover:underline"
-                                  >
-                                    Fluxo Clínico
-                                  </Link>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
 
-                  {/* Mobile Card View */}
-                  <div className="md:hidden divide-y divide-slate-100">
-                    {patients
-                      .filter(p => 
-                        (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
-                        (p.cpf && p.cpf.includes(searchTerm)) ||
-                        p.phone.includes(searchTerm)
-                      )
-                      .map((patient) => (
-                        <div 
-                          key={patient.id} 
-                          onClick={() => openPatientRecord(patient.id)}
-                          className="p-4 active:bg-slate-50 transition-colors"
+                {statusBarItems.length > 0 && (
+                  <div className="h-8 flex items-center gap-1.5 text-xs text-slate-500 px-1 mb-2 overflow-x-auto whitespace-nowrap">
+                    {statusBarItems.map((item, index) => (
+                      <React.Fragment key={item.id}>
+                        <motion.button
+                          onClick={item.onClick}
+                          className={`inline-flex items-center ${item.tone} hover:text-slate-800 transition-colors`}
+                          whileTap={{ scale: 0.98 }}
                         >
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold">
-                                {(patient.name || '?').charAt(0)}
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-800">{patient.name}</p>
-                                <p className="text-[10px] text-slate-400 font-mono">{patient.cpf || 'Sem CPF'}</p>
-                              </div>
+                          <motion.span
+                            key={`${item.id}-${item.text}`}
+                            initial={{ opacity: 0.6, scale: 0.98 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ duration: 0.15 }}
+                          >
+                            {item.text}
+                          </motion.span>
+                        </motion.button>
+                        {index < statusBarItems.length - 1 && <span className="text-slate-300">•</span>}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {[
+                    { id: 'ALL', label: 'Todos' },
+                    { id: 'IN_TREATMENT', label: 'Em tratamento' },
+                    { id: 'REVIEW', label: 'Revisão' },
+                    { id: 'OVERDUE', label: 'Atrasados' }
+                  ].map(chip => (
+                    <button
+                      key={chip.id}
+                      onClick={() => setPatientManagementFilter(chip.id as 'ALL' | 'IN_TREATMENT' | 'REVIEW' | 'OVERDUE')}
+                      className={`px-4 py-2 rounded-full text-xs font-bold transition-all border ${
+                        patientManagementFilter === chip.id
+                          ? 'bg-primary text-white border-primary shadow-sm'
+                          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="p-3 sm:p-4 space-y-3">
+                    {patientCardsData.map(({ patient, meta }) => {
+                      const indicatorConfig =
+                        meta.indicator === 'OVERDUE'
+                          ? { dot: 'bg-rose-500', bg: 'bg-rose-50', text: 'text-rose-700', label: 'Atrasado' }
+                          : meta.indicator === 'UPCOMING_REVIEW'
+                            ? { dot: 'bg-amber-500', bg: 'bg-amber-50', text: 'text-amber-700', label: 'Revisão próxima' }
+                            : { dot: 'bg-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Em dia' };
+
+                      const clinicalLabel =
+                        meta.priorityStatus === 'EM_TRATAMENTO'
+                          ? 'Em tratamento'
+                          : meta.priorityStatus === 'REVISAO'
+                            ? 'Revisão'
+                            : meta.priorityStatus === 'ATRASADO'
+                              ? 'Atrasado'
+                              : 'Em dia';
+
+                      return (
+                        <div
+                          key={patient.id}
+                          onClick={() => openPatientRecord(patient.id)}
+                          className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:shadow-sm transition-all"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 pr-2">
+                              <p className="text-[15px] font-bold text-slate-900 truncate">{patient.name}</p>
+                              <p className="mt-0.5 text-[12px] text-slate-600 truncate">{clinicalLabel}</p>
+                              <p className="mt-1.5 text-[11px] text-slate-400 truncate">
+                                <span className={`inline-block w-1.5 h-1.5 rounded-full align-middle mr-1.5 ${indicatorConfig.dot}`} />
+                                {indicatorConfig.label} • {meta.timeSinceLastVisit}
+                              </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Link 
-                                to={`/pacientes/${patient.id}/clinico`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="p-2 bg-blue-50 text-blue-600 rounded-lg"
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openAppointmentModalForPatient(patient);
+                                }}
+                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 hover:bg-primary/10 hover:text-primary transition-colors flex items-center justify-center"
+                                aria-label="Agendar consulta"
+                                title="Agendar consulta"
                               >
-                                <Activity size={16} />
-                              </Link>
-                              <ChevronRight size={18} className="text-slate-300" />
+                                <Calendar size={15} />
+                              </button>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const whatsappUrl = getWhatsappUrl(patient.phone);
+                                  if (whatsappUrl) {
+                                    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+                                  }
+                                }}
+                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 transition-colors flex items-center justify-center"
+                                aria-label="Contato via WhatsApp"
+                                title="Contato via WhatsApp"
+                              >
+                                <MessageCircle size={15} />
+                              </button>
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="bg-slate-50 p-2 rounded-lg">
-                              <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Telefone</p>
-                              <p className="text-slate-700 font-medium">{patient.phone}</p>
-                            </div>
-                            <div className="bg-slate-50 p-2 rounded-lg">
-                              <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Última Visita</p>
-                              <p className="text-slate-700 font-medium">12/02/2024</p>
-                            </div>
+
+                          <div className="mt-2 h-px bg-slate-100" />
+
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                            <span className="truncate">Toque para abrir detalhes</span>
+                            <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 transition-colors" />
                           </div>
                         </div>
-                      ))}
+                      );
+                    })}
+
+                    {patientCardsData.length === 0 && (
+                      <div className="p-10 text-center text-slate-500">
+                        Nenhum paciente encontrado com os filtros atuais.
+                      </div>
+                    )}
                   </div>
                 </div>
             </div>
