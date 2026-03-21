@@ -16,6 +16,7 @@ interface DashboardProps {
   setIsModalOpen: (open: boolean) => void;
   setActiveTab: (tab: any) => void;
   sendReminder: (appointment: any) => void;
+  onReschedule: (appointment: any) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -28,7 +29,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   openPatientRecord,
   setIsModalOpen,
   setActiveTab,
-  sendReminder
+  sendReminder,
+  onReschedule
 }) => {
   const nextPatient = nextAppointments[0];
   const otherAppointments = nextAppointments.slice(1, 5);
@@ -45,18 +47,36 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const now = new Date();
     const hour = now.getHours();
     if (hour < 12) return { text: 'Bom dia', emoji: '☀️' };
-    if (hour < 18) return { text: 'Boa tarde', emoji: '👋' };
+    if (hour < 18) return { text: 'Boa tarde', emoji: '👋🏻' };
     return { text: 'Boa noite', emoji: '🌙' };
   };
 
-  const getStatusBadge = (status: string) => {
+  const timeGreeting = getTimeGreeting();
+
+  // Get effective status based on current time
+  const getEffectiveStatus = (appointment: any): string => {
+    const now = new Date();
+    const startTime = new Date(appointment.start_time);
+    const endTime = new Date(appointment.end_time);
+    
+    if (now >= endTime) {
+      return 'FINISHED';
+    }
+    if (now >= startTime && now < endTime) {
+      return 'IN_PROGRESS';
+    }
+    return appointment.status;
+  };
+
+  const getStatusBadge = (appointment: any) => {
+    const status = getEffectiveStatus(appointment);
     switch (status) {
       case 'CONFIRMED':
         return { label: 'Confirmado', className: 'bg-[#F0F9F4] text-[#2B8A56]' };
       case 'IN_PROGRESS':
         return { label: 'Em atendimento', className: 'bg-[#EAF4FF] text-[#1E6ED6]' };
       case 'FINISHED':
-        return { label: 'Finalizado', className: 'bg-[#F3F3F5] text-[#6B7280]' };
+        return { label: 'Finalizado', className: 'bg-[#F9FAFB] text-[#9CA3AF]' };
       case 'CANCELLED':
         return { label: 'Cancelado', className: 'bg-[#FDECEF] text-[#C53030]' };
       case 'SCHEDULED':
@@ -76,7 +96,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* 1. HEADER */}
       <header className="space-y-1.5 px-2">
         <h1 className="text-[28px] font-bold tracking-tight text-[#1C1C1E]">
-          {getTimeGreeting().text}, {getGreetingName()} {getTimeGreeting().emoji}
+          {timeGreeting.text}, {getGreetingName()} <span className="text-[14px] align-middle">{timeGreeting.emoji}</span>
         </h1>
         <p className="text-[17px] font-medium text-[#8E8E93]">
           {getStatusMessage()}
@@ -98,7 +118,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </h2>
                 <div className="flex items-center gap-2">
                   {(() => {
-                    const badge = getStatusBadge(nextPatient.status);
+                    const badge = getStatusBadge(nextPatient);
                     return (
                       <span className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${badge.className}`}>
                         {badge.label}
@@ -149,7 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <motion.button 
                   whileTap={{ scale: 0.98, opacity: 0.9 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  onClick={() => setActiveTab('agenda')}
+                  onClick={() => onReschedule(nextPatient)}
                   className="flex items-center justify-center gap-2.5 py-[18px] rounded-[26px] text-[15px] font-bold text-[#8E8E93] hover:text-[#1C1C1E] transition-all"
                 >
                   Reagendar
@@ -220,7 +240,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <motion.button 
             whileTap={{ scale: 0.97, opacity: 0.9 }}
             transition={{ duration: 0.2 }}
-            onClick={() => setActiveTab('agenda')}
             className="bg-primary text-white px-8 py-4 rounded-[999px] text-[14px] font-bold shadow-[0_8px_24px_rgba(38,78,54,0.1)] w-full sm:w-auto"
           >
             Enviar lembretes

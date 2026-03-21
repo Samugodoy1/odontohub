@@ -18,6 +18,7 @@ import {
 import { 
   getAppointments, 
   createAppointment, 
+  updateAppointment,
   updateAppointmentStatus, 
   remindAppointment 
 } from '../server/controllers/appointmentController.js';
@@ -114,6 +115,7 @@ app.get(['/patients/:id/financial', '/api/patients/:id/financial'], getPatientFi
 // Appointments
 app.get(['/appointments', '/api/appointments'], getAppointments);
 app.post(['/appointments', '/api/appointments'], createAppointment);
+app.put(['/appointments/:id', '/api/appointments/:id'], updateAppointment);
 app.patch(['/appointments/:id/status', '/api/appointments/:id/status'], updateAppointmentStatus);
 app.post(['/appointments/:id/remind', '/api/appointments/:id/remind'], remindAppointment);
 
