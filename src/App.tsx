@@ -7,7 +7,7 @@ import {
   ClipboardList, 
   DollarSign, 
   Plus, 
-  Search, 
+  Search,
   ChevronRight,
   ChevronLeft,
   MessageCircle,
@@ -36,7 +36,8 @@ import {
   Download,
   X,
   List,
-  Activity
+  Activity,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Odontogram } from './components/Odontogram';
@@ -45,7 +46,7 @@ import { PatientClinical } from './components/PatientClinical';
 import { TermsPage, PrivacyPage } from './components/LegalPages';
 import { NovaEvolucao } from './components/NovaEvolucao';
 import { Dashboard } from './components/Dashboard';
-import { formatDate, isOverdue } from './utils/dateUtils';
+import { formatDate, isOverdue, getFreeSlots, getSuggestion, FreeSlot } from './utils/dateUtils';
 
 // Types
 interface Patient {
@@ -222,64 +223,45 @@ const BottomNavItem = ({ id, icon: Icon, label, activeTab, setActiveTab, navigat
       setActiveTab(id);
       navigate('/');
     }}
-    title={label}
-    className={`flex items-center justify-center flex-1 py-2 transition-colors ${activeTab === id ? 'text-primary' : 'text-slate-400 hover:text-slate-600'}`}
+    className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 transition-all ${
+      activeTab === id 
+        ? 'text-primary' 
+        : 'text-[#8E8E93]'
+    }`}
   >
-    <Icon size={22} className={activeTab === id ? 'stroke-[2px]' : 'stroke-[1.5px]'} />
+    <Icon size={24} className={activeTab === id ? 'stroke-[2.5px]' : 'stroke-[1.5px]'} />
+    <span className={`text-[10px] font-semibold ${activeTab === id ? 'opacity-100' : 'opacity-80'}`}>{label}</span>
   </button>
 );
-
-// Function to get the effective status based on current time
-const getEffectiveStatus = (appointment: Appointment): Appointment['status'] => {
-  const now = new Date();
-  const startTime = new Date(appointment.start_time);
-  const endTime = new Date(appointment.end_time);
-  
-  // If consultation time has passed, mark as FINISHED
-  if (now >= endTime) {
-    return 'FINISHED';
-  }
-  
-  // If we're within the consultation window, mark as IN_PROGRESS
-  if (now >= startTime && now < endTime) {
-    return 'IN_PROGRESS';
-  }
-  
-  // Otherwise return the original status
-  return appointment.status;
-};
 
 const StatusBadge = ({ app, now }: { app: Appointment; now: Date }) => {
   const startTime = new Date(app.start_time);
   const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / 60000);
   
-  // Use effective status for display
-  const effectiveStatus = getEffectiveStatus(app);
-  
   let label = '';
   let style = '';
   let icon = null;
 
-  if (effectiveStatus === 'IN_PROGRESS') {
+  if (app.status === 'IN_PROGRESS') {
     label = 'Em Atendimento';
     style = 'bg-primary/10 text-primary border-primary/20';
     icon = <Activity size={10} className="animate-pulse" />;
-  } else if (effectiveStatus === 'FINISHED') {
+  } else if (app.status === 'FINISHED') {
     label = 'Finalizado';
-    style = 'bg-slate-50 text-slate-400 border-slate-100';
-  } else if (effectiveStatus === 'CANCELLED') {
+    style = 'bg-slate-100 text-slate-500 border-slate-200';
+  } else if (app.status === 'CANCELLED') {
     label = 'Faltou';
     style = 'bg-rose-50 text-rose-500 border-rose-100';
     icon = <AlertCircle size={10} />;
-  } else if (diffInMinutes < 0 && effectiveStatus === 'SCHEDULED') {
+  } else if (diffInMinutes < 0 && app.status === 'SCHEDULED') {
     label = 'Atrasado';
     style = 'bg-rose-50 text-rose-500 border-rose-100 animate-pulse';
     icon = <Clock size={10} />;
-  } else if (diffInMinutes >= 0 && diffInMinutes <= 15 && effectiveStatus === 'SCHEDULED') {
+  } else if (diffInMinutes >= 0 && diffInMinutes <= 15 && app.status === 'SCHEDULED') {
     label = `Próximo em ${diffInMinutes} min`;
     style = 'bg-amber-50 text-amber-600 border-amber-100 font-bold';
     icon = <Clock size={10} />;
-  } else if (effectiveStatus === 'CONFIRMED') {
+  } else if (app.status === 'CONFIRMED') {
     label = 'Confirmado';
     style = 'bg-emerald-50 text-emerald-600 border-emerald-100';
   } else {
@@ -491,6 +473,8 @@ export default function App() {
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedPatientTab, setSelectedPatientTab] = useState<'evolucao' | 'imagens' | 'financeiro'>('evolucao');
+  const [isAnamnesisEditing, setIsAnamnesisEditing] = useState(false);
+  const [showTreatmentPlanSummary, setShowTreatmentPlanSummary] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [isDentistModalOpen, setIsDentistModalOpen] = useState(false);
@@ -499,7 +483,9 @@ export default function App() {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [patientManagementFilter, setPatientManagementFilter] = useState<'ALL' | 'IN_TREATMENT' | 'REVIEW' | 'OVERDUE'>('ALL');
+  const [patientListFilter, setPatientListFilter] = useState<'all' | 'in-treatment' | 'review' | 'overdue'>('all');
+  const [patientActionsToday, setPatientActionsToday] = useState<Set<number>>(new Set());
+  const [patientsInlineFeedback, setPatientsInlineFeedback] = useState('');
   const [dentistSearchTerm, setDentistSearchTerm] = useState('');
   const [dentistStatusFilter, setDentistStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -508,6 +494,7 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [monthSheetSelectedDay, setMonthSheetSelectedDay] = useState<Date | null>(null);
   const [weekSheetSelectedAppointment, setWeekSheetSelectedAppointment] = useState<Appointment | null>(null);
+  const [weekSuggestionSheet, setWeekSuggestionSheet] = useState<{ date: Date; start: string; end: string; duration: number; procedure: string } | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -529,7 +516,6 @@ export default function App() {
     duration: '',
     notes: ''
   });
-  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [suggestedSlot, setSuggestedSlot] = useState<{ date: Date; duration: number; procedure: string } | null>(null);
 
   const [newPaymentPlan, setNewPaymentPlan] = useState({
@@ -619,37 +605,6 @@ export default function App() {
       apiFetch('/api/admin/update-schema').catch(console.error);
     }
   }, [user]);
-
-  // Auto-sync appointment status changes (IN_PROGRESS and FINISHED)
-  useEffect(() => {
-    const syncAutoStatusChanges = async () => {
-      for (const appointment of appointments) {
-        const effectiveStatus = getEffectiveStatus(appointment);
-        
-        // Only sync if status changed automatically (not CANCELLED or initial SCHEDULED status)
-        if (
-          effectiveStatus !== appointment.status &&
-          (effectiveStatus === 'IN_PROGRESS' || effectiveStatus === 'FINISHED')
-        ) {
-          try {
-            await apiFetch(`/api/appointments/${appointment.id}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ status: effectiveStatus })
-            });
-          } catch (error) {
-            console.error(`Error syncing status for appointment ${appointment.id}:`, error);
-          }
-        }
-      }
-    };
-
-    // Run sync check every minute
-    const interval = setInterval(syncAutoStatusChanges, 60000);
-    // Also run once on mount
-    syncAutoStatusChanges();
-    
-    return () => clearInterval(interval);
-  }, [appointments]);
 
   useEffect(() => {
     if (selectedPatientTab === 'financeiro' && selectedPatient) {
@@ -1164,11 +1119,7 @@ export default function App() {
   ).length;
 
   const nextAppointments = appointments
-    .filter(a => 
-      new Date(a.start_time).toDateString() === dashboardNow.toDateString() && 
-      a.status !== 'FINISHED' && 
-      a.status !== 'CANCELLED'
-    )
+    .filter(a => new Date(a.start_time).toDateString() === dashboardNow.toDateString() && new Date(a.start_time) >= dashboardNow && a.status !== 'FINISHED' && a.status !== 'CANCELLED')
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 5);
 
@@ -1239,295 +1190,225 @@ export default function App() {
     // Initialize with current user if available
     const dentist_id = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
     
-    setEditingAppointment(null);
     setNewAppointment({
       patient_id: '',
       dentist_id: dentist_id || '',
-      date: '',
-      time: '',
-      duration: '',
+      start_time: '',
+      end_time: '',
       notes: ''
     });
     setIsModalOpen(true);
   };
 
-  const openEditAppointmentModal = (appointment: Appointment, navigateToAgenda = false) => {
-    const startTime = new Date(appointment.start_time);
-    const endTime = new Date(appointment.end_time);
-    const durationInMinutes = Math.max(1, Math.round((endTime.getTime() - startTime.getTime()) / 60000));
+  const openPatientAppointmentModal = (patient: Patient) => {
+    const dentistId = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
 
-    if (navigateToAgenda) {
-      setActiveTab('agenda');
-    }
-
-    setSelectedDate(startTime);
-    setSuggestedSlot(null);
-    setEditingAppointment(appointment);
-    setNewAppointment({
-      patient_id: appointment.patient_id.toString(),
-      dentist_id: appointment.dentist_id?.toString() || (user?.id ? user.id.toString() : ''),
-      date: startTime.toLocaleDateString('en-CA'),
-      time: startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false }),
-      duration: durationInMinutes.toString(),
-      notes: appointment.notes || ''
-    });
-    setIsModalOpen(true);
-  };
-
-  const openAppointmentModalForPatient = (patient: Patient) => {
-    const dentist_id = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
-
-    setEditingAppointment(null);
-    setSelectedDate(new Date());
     setNewAppointment({
       patient_id: patient.id.toString(),
-      dentist_id: dentist_id || '',
-      date: '',
+      dentist_id: dentistId || '',
+      date: new Date().toLocaleDateString('en-CA'),
       time: '',
-      duration: '',
+      duration: '30',
       notes: ''
     });
     setIsModalOpen(true);
   };
 
-  const getWhatsappUrl = (phone: string) => {
-    const digits = (phone || '').replace(/\D/g, '');
-    if (!digits) return '';
-    const normalizedPhone = digits.startsWith('55') ? digits : `55${digits}`;
-    return `https://wa.me/${normalizedPhone}`;
-  };
-
-  const formatTimeSinceLastVisit = (lastVisit: Date | null) => {
-    if (!lastVisit) return 'Sem visita registrada';
-    const diffMs = now.getTime() - lastVisit.getTime();
-    const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-
-    if (diffDays === 0) return 'hoje';
-    if (diffDays === 1) return '1 dia atrás';
-    if (diffDays < 30) return `${diffDays} dias atrás`;
-
-    const diffMonths = Math.floor(diffDays / 30);
-    if (diffMonths === 1) return '1 mês atrás';
-    if (diffMonths < 12) return `${diffMonths} meses atrás`;
-
-    const diffYears = Math.floor(diffMonths / 12);
-    return diffYears === 1 ? '1 ano atrás' : `${diffYears} anos atrás`;
-  };
-
-  const getPatientManagementMeta = (patient: Patient) => {
-    const patientAppointments = appointments
-      .filter(a => a.patient_id === patient.id)
-      .filter(a => {
-        const status = String(a.status || '').toUpperCase();
-        return status !== 'CANCELLED' && status !== 'NO_SHOW';
-      })
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const nextVisit = patientAppointments.find(a => {
-      const visitDate = new Date(a.start_time);
-      visitDate.setHours(0, 0, 0, 0);
-      return visitDate >= startOfToday;
-    });
-    const nextVisitDate = nextVisit ? new Date(nextVisit.start_time) : null;
-
-    const pastAppointments = patientAppointments
-      .filter(a => new Date(a.start_time) <= now)
-      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-    const lastVisitDate = pastAppointments.length > 0 ? new Date(pastAppointments[0].start_time) : null;
-
-    const daysSinceLastVisit = lastVisitDate
-      ? Math.floor((startOfToday.getTime() - new Date(lastVisitDate.getFullYear(), lastVisitDate.getMonth(), lastVisitDate.getDate()).getTime()) / (1000 * 60 * 60 * 24))
-      : null;
-
-    let priorityStatus: 'EM_TRATAMENTO' | 'ATRASADO' | 'REVISAO' | 'EM_DIA' = 'EM_DIA';
-
-    // 1. EM TRATAMENTO (highest priority): nextVisitDate exists AND today <= nextVisitDate
-    if (nextVisitDate) {
-      const normalizedNextVisit = new Date(nextVisitDate);
-      normalizedNextVisit.setHours(0, 0, 0, 0);
-      if (startOfToday <= normalizedNextVisit) {
-        priorityStatus = 'EM_TRATAMENTO';
-      }
-    } else if (daysSinceLastVisit !== null) {
-      // 2. ATRASADO: daysSinceLastVisit > 180
-      if (daysSinceLastVisit > 180) {
-        priorityStatus = 'ATRASADO';
-      }
-      // 3. REVISAO: daysSinceLastVisit > 90
-      else if (daysSinceLastVisit > 90) {
-        priorityStatus = 'REVISAO';
-      }
-      // 4. EM DIA: otherwise
-      else {
-        priorityStatus = 'EM_DIA';
-      }
-    }
-
-    const clinicalStatus: 'IN_TREATMENT' | 'REVIEW' | 'INACTIVE' =
-      priorityStatus === 'EM_TRATAMENTO'
-        ? 'IN_TREATMENT'
-        : priorityStatus === 'REVISAO'
-          ? 'REVIEW'
-          : priorityStatus === 'ATRASADO'
-            ? 'INACTIVE'
-            : 'REVIEW';
-
-    const indicator: 'OVERDUE' | 'UPCOMING_REVIEW' | 'UP_TO_DATE' =
-      priorityStatus === 'ATRASADO'
-        ? 'OVERDUE'
-        : priorityStatus === 'REVISAO'
-          ? 'UPCOMING_REVIEW'
-          : 'UP_TO_DATE';
-
-    return {
-      priorityStatus,
-      nextVisitDate,
-      lastVisitDate,
-      daysSinceLastVisit,
-      clinicalStatus,
-      indicator,
-      timeSinceLastVisit: formatTimeSinceLastVisit(lastVisitDate)
-    };
-  };
-
-  const patientCardsData = patients
-    .filter(p =>
-      (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
-      (p.cpf && p.cpf.includes(searchTerm)) ||
-      (p.phone || '').includes(searchTerm)
-    )
-    .map(patient => ({
-      patient,
-      meta: getPatientManagementMeta(patient)
-    }))
-    .filter(item => {
-      if (patientManagementFilter === 'ALL') return true;
-      if (patientManagementFilter === 'IN_TREATMENT') return item.meta.clinicalStatus === 'IN_TREATMENT';
-      if (patientManagementFilter === 'REVIEW') return item.meta.clinicalStatus === 'REVIEW';
-      if (patientManagementFilter === 'OVERDUE') return item.meta.indicator === 'OVERDUE';
-      return true;
-    });
-
-  const attentionPatientsCount = patientCardsData.filter(item => item.meta.indicator === 'OVERDUE').length;
-
-  const resolveWorkingHours = (): WorkingHoursRange => {
-    const profileAny = profile as any;
-    const startCandidates = [
-      profileAny?.working_hours_start,
-      profileAny?.workingHoursStart,
-      profileAny?.agenda_start,
-      profileAny?.agendaStart
-    ];
-    const endCandidates = [
-      profileAny?.working_hours_end,
-      profileAny?.workingHoursEnd,
-      profileAny?.agenda_end,
-      profileAny?.agendaEnd
-    ];
-
-    const validTime = (value: any) => typeof value === 'string' && /^([01]?\d|2[0-3]):([0-5]\d)$/.test(value);
-
-    const start = startCandidates.find(validTime) || '08:00';
-    const end = endCandidates.find(validTime) || '18:00';
-
-    return { start, end };
-  };
-
-  const todayOpportunities = calculateDailyOpportunities({
-    appointments,
-    date: now,
-    workingHours: resolveWorkingHours(),
-    minSlotMinutes: 30,
-    nowRef: now
-  });
-
-  const opportunitiesCount = todayOpportunities.count;
-
-  const attendedTodayCount = proceduresToday;
-  const [todayAttendanceHint, setTodayAttendanceHint] = useState<string | null>(null);
-  const todayAttendanceHintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [highlightTodayMetric, setHighlightTodayMetric] = useState(false);
-  const hasInitializedTodayMetricRef = useRef(false);
-
-  useEffect(() => {
-    if (!hasInitializedTodayMetricRef.current) {
-      hasInitializedTodayMetricRef.current = true;
+  const contactPatientOnWhatsApp = (patient: Patient) => {
+    if (!patient.phone) {
+      alert('Este paciente não possui telefone cadastrado.');
       return;
     }
 
-    setHighlightTodayMetric(true);
-    const timeout = setTimeout(() => setHighlightTodayMetric(false), 900);
-    return () => clearTimeout(timeout);
-  }, [attendedTodayCount]);
+    let phone = patient.phone.replace(/\D/g, '');
+    if (phone.length === 10 || phone.length === 11) {
+      phone = `55${phone}`;
+    } else if (phone.length > 11 && !phone.startsWith('55')) {
+      phone = `55${phone}`;
+    }
 
-  useEffect(() => {
-    return () => {
-      if (todayAttendanceHintTimeoutRef.current) {
-        clearTimeout(todayAttendanceHintTimeoutRef.current);
+    const firstName = (patient.name || '').split(' ')[0] || 'Olá';
+    const message = `Olá ${firstName}, tudo bem?`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
+  const getPatientLastVisitDate = (patient: Patient) => {
+    const finishedAppointments = appointments
+      .filter(app => app.patient_id === patient.id && app.status === 'FINISHED')
+      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+
+    if (finishedAppointments.length > 0) {
+      return new Date(finishedAppointments[0].start_time);
+    }
+
+    if (patient.evolution && patient.evolution.length > 0) {
+      const evolutionDates = patient.evolution
+        .map(item => new Date(item.date))
+        .filter(date => !Number.isNaN(date.getTime()))
+        .sort((a, b) => b.getTime() - a.getTime());
+
+      return evolutionDates[0] || null;
+    }
+
+    return null;
+  };
+
+  const formatTimeSinceLastVisit = (date: Date | null) => {
+    if (!date) return 'Sem visitas registradas';
+
+    const nowDate = new Date();
+    const diffInDays = Math.max(0, Math.floor((nowDate.getTime() - date.getTime()) / 86400000));
+
+    if (diffInDays < 30) {
+      if (diffInDays <= 1) return 'há 1 dia';
+      if (diffInDays < 7) return `há ${diffInDays} dias`;
+      const weeks = Math.floor(diffInDays / 7);
+      return `há ${weeks} ${weeks === 1 ? 'semana' : 'semanas'}`;
+    }
+
+    const months = Math.max(1, Math.floor(diffInDays / 30));
+    if (months < 12) {
+      return `há ${months} ${months === 1 ? 'mês' : 'meses'}`;
+    }
+
+    const years = Math.floor(months / 12);
+    return `há ${years} ${years === 1 ? 'ano' : 'anos'}`;
+  };
+
+  const formatNextVisitLabel = (date: Date | null) => {
+    if (!date) return null;
+
+    const startToday = new Date(now);
+    startToday.setHours(0, 0, 0, 0);
+    const startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+    const startAfterTomorrow = new Date(startTomorrow);
+    startAfterTomorrow.setDate(startAfterTomorrow.getDate() + 1);
+
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    const timeLabel = `${hh}:${mm}`;
+
+    if (date >= startToday && date < startTomorrow) {
+      return `Hoje, ${timeLabel}`;
+    }
+    if (date >= startTomorrow && date < startAfterTomorrow) {
+      return `Amanhã, ${timeLabel}`;
+    }
+    return `${formatDate(date.toISOString())}, ${timeLabel}`;
+  };
+
+  const getRelativeDayLabel = (dateStr: string) => {
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return formatDate(dateStr) || 'Data inválida';
+
+    const startToday = new Date(now);
+    startToday.setHours(0, 0, 0, 0);
+    const startYesterday = new Date(startToday);
+    startYesterday.setDate(startYesterday.getDate() - 1);
+    const startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+
+    if (date >= startToday && date < startTomorrow) return 'Hoje';
+    if (date >= startYesterday && date < startToday) return 'Ontem';
+
+    return formatDate(date.toISOString()) || formatDate(dateStr) || 'Sem data';
+  };
+
+  const getPatientCardMeta = (patient: Patient) => {
+    const lastVisitDate = getPatientLastVisitDate(patient);
+
+    // ── Derive clinical fields from real data ──────────────────────────────
+
+    // hasActiveTreatment: treatment plan with open items OR a future scheduled/confirmed appointment
+    const hasActiveTreatment =
+      (patient.treatmentPlan?.some(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO') ?? false) ||
+      appointments.some(app =>
+        app.patient_id === patient.id &&
+        new Date(app.start_time) > now &&
+        app.status !== 'CANCELLED' && app.status !== 'FINISHED'
+      );
+
+    // nextVisitDate: nearest upcoming SCHEDULED/CONFIRMED appointment.
+    const scheduledAppointments = appointments
+      .filter(app =>
+        app.patient_id === patient.id &&
+        (app.status === 'SCHEDULED' || app.status === 'CONFIRMED')
+      )
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+    const nextVisitAppointment = scheduledAppointments.find(app => new Date(app.start_time) >= now) ?? null;
+    const nextVisitDate: Date | null = nextVisitAppointment ? new Date(nextVisitAppointment.start_time) : null;
+
+    // isInRecallProgram: patient has at least one recorded visit (ever seen before)
+    const isInRecallProgram = lastVisitDate !== null;
+
+    // Fallback signal when there's no next visit scheduled.
+    const daysSinceLastVisit = lastVisitDate
+      ? Math.floor((now.getTime() - lastVisitDate.getTime()) / (1000 * 60 * 60 * 24))
+      : Number.POSITIVE_INFINITY;
+
+    // ── Clinical priority rules (strict order) ────────────────────────────
+    // 1. em_tratamento – nextVisitDate exists and today <= nextVisitDate
+    // 2. atrasado      – daysSinceLastVisit > 180 (only when nextVisitDate is null)
+    // 3. revisao       – daysSinceLastVisit > 90  (only when nextVisitDate is null)
+    // 4. em_dia        – otherwise
+
+    type AttentionKey = 'overdue' | 'review' | 'up-to-date';
+    type PatientStatus = 'em_tratamento' | 'atrasado' | 'revisao' | 'em_dia';
+    let attentionKey: AttentionKey;
+    let status: PatientStatus;
+    let clinicalStatus: string;
+
+    if (nextVisitDate !== null && now <= nextVisitDate) {
+      status       = 'em_tratamento';
+      attentionKey = 'up-to-date';
+      clinicalStatus = 'Em tratamento';
+    } else if (nextVisitDate !== null && now > nextVisitDate) {
+      // Missed scheduled appointment should still be treated as attention-needed.
+      status       = 'atrasado';
+      attentionKey   = 'overdue';
+      clinicalStatus = 'Inativo';
+    } else if (nextVisitDate === null) {
+      if (daysSinceLastVisit > 180) {
+        status       = 'atrasado';
+        attentionKey = 'overdue';
+        clinicalStatus = 'Inativo';
+      } else if (daysSinceLastVisit > 90) {
+        status       = 'revisao';
+        attentionKey = 'review';
+        clinicalStatus = 'Revisão';
+      } else {
+        status       = 'em_dia';
+        attentionKey = 'up-to-date';
+        clinicalStatus = 'Em dia';
       }
+    } else {
+      status       = 'em_dia';
+      attentionKey   = 'up-to-date';
+      clinicalStatus = 'Em dia';
+    }
+
+    const attentionStatusMap: Record<AttentionKey, { key: AttentionKey; label: string; dot: string; tone: string }> = {
+      'overdue':    { key: 'overdue',    label: 'Atrasado',        dot: 'bg-rose-500',    tone: 'text-rose-700 bg-rose-50 border-rose-100' },
+      'review':     { key: 'review',     label: 'Revisão próxima', dot: 'bg-amber-400',   tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+      'up-to-date': { key: 'up-to-date', label: 'Em dia',          dot: 'bg-emerald-500', tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
     };
-  }, []);
 
-  const getTodayAttendanceHint = (count: number) => {
-    if (count >= 4) return `${count} atendimentos hoje, parabens 🔥`;
-    if (count === 3) return '3 atendimentos hoje, excelente ritmo';
-    if (count === 2) return '2 atendimentos hoje, continue assim';
-    if (count === 1) return '1 atendimento hoje, bom comeco';
-    return 'Sem atendimentos finalizados ate agora';
+    return {
+      lastVisitDate,
+      lastVisitLabel: formatTimeSinceLastVisit(lastVisitDate),
+      clinicalStatus,
+      attentionStatus: attentionStatusMap[attentionKey],
+      // expose derived fields for future consumers
+      hasActiveTreatment,
+      nextVisitDate,
+      nextVisitLabel: formatNextVisitLabel(nextVisitDate),
+      isInRecallProgram,
+      daysSinceLastVisit,
+      status,
+    };
   };
-
-  const showTodayAttendanceHint = () => {
-    const message = getTodayAttendanceHint(attendedTodayCount);
-    showTemporaryStatusHint(message);
-  };
-
-  const showTemporaryStatusHint = (message: string) => {
-    setTodayAttendanceHint(message);
-
-    if (todayAttendanceHintTimeoutRef.current) {
-      clearTimeout(todayAttendanceHintTimeoutRef.current);
-    }
-
-    todayAttendanceHintTimeoutRef.current = setTimeout(() => {
-      setTodayAttendanceHint(null);
-    }, 3500);
-  };
-
-  const showOpportunitiesHint = () => {
-    const message = `Voce tem ${opportunitiesCount} oportunidade${opportunitiesCount === 1 ? '' : 's'} de agendamento hoje`;
-    showTemporaryStatusHint(message);
-  };
-
-  const statusBarItems = [
-    {
-      id: 'today',
-      count: attendedTodayCount,
-      text: `${attendedTodayCount > 3 ? '🔥 ' : ''}${attendedTodayCount} hoje`,
-      onClick: showTodayAttendanceHint,
-      tone: highlightTodayMetric ? 'text-emerald-600' : 'text-slate-500'
-    },
-    {
-      id: 'opportunities',
-      count: opportunitiesCount,
-      text: `${opportunitiesCount} oportunidade${opportunitiesCount === 1 ? '' : 's'}`,
-      onClick: showOpportunitiesHint,
-      tone: 'text-slate-500'
-    },
-    {
-      id: 'attention',
-      count: attentionPatientsCount,
-      text: `${attentionPatientsCount} ${attentionPatientsCount === 1 ? 'precisa' : 'precisam'} de atenção`,
-      onClick: () => {
-        setActiveTab('pacientes');
-        setPatientManagementFilter('OVERDUE');
-      },
-      tone: attentionPatientsCount > 0 ? 'text-rose-600' : 'text-slate-500'
-    }
-  ].filter(item => item.count > 0);
 
   const formatProcedure = (input: string) => {
     const normalized = (input || '').trim();
@@ -1599,141 +1480,80 @@ export default function App() {
     }
   };
 
-  type WorkingHoursRange = { start: string; end: string };
-  type FreeSlot = { startTime: Date; endTime: Date; duration: number; procedure?: string };
-  type TimeRangeInput = { start: string | Date; end: string | Date };
-
-  function parseTimeToMinutes(time: string) {
-    const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((time || '').trim());
-    if (!match) return null;
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    return (hours * 60) + minutes;
-  }
-
-  function calculateDailyOpportunities({
-    appointments,
-    date,
-    workingHours,
-    minSlotMinutes = 30,
-    nowRef,
-    blockedPeriods = []
-  }: {
-    appointments: Appointment[];
-    date: Date;
-    workingHours: WorkingHoursRange;
-    minSlotMinutes?: number;
-    nowRef?: Date;
-    blockedPeriods?: TimeRangeInput[];
-  }): { count: number; slots: FreeSlot[] } {
-    const startMinutes = parseTimeToMinutes(workingHours.start);
-    const endMinutes = parseTimeToMinutes(workingHours.end);
-
-    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-      return { count: 0, slots: [] };
-    }
-
-    const workStart = new Date(date);
-    workStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
-    const workEnd = new Date(date);
-    workEnd.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
-
-    const isToday = date.toDateString() === (nowRef || new Date()).toDateString();
-    const effectiveStart = isToday ? new Date(Math.max(workStart.getTime(), (nowRef || new Date()).getTime())) : workStart;
-
-    if (effectiveStart >= workEnd) {
-      return { count: 0, slots: [] };
-    }
-
-    const busyRanges: Array<{ start: Date; end: Date }> = [];
-
-    appointments
+  const findAvailableSlots = (date: Date, workingHours = { start: 8, end: 18 }) => {
+    const dayAppointments = appointments
       .filter(a => {
-        const appStart = new Date(a.start_time);
-        const appEnd = new Date(a.end_time);
-        const status = String(a.status || '').toUpperCase();
-
-        if (appStart.toDateString() !== date.toDateString()) return false;
-        if (status === 'CANCELLED' || status === 'NO_SHOW') return false;
-        return appEnd > workStart && appStart < workEnd;
+        const appDate = new Date(a.start_time);
+        return appDate.toDateString() === date.toDateString();
       })
-      .forEach(a => {
-        const start = new Date(Math.max(new Date(a.start_time).getTime(), effectiveStart.getTime()));
-        const end = new Date(Math.min(new Date(a.end_time).getTime(), workEnd.getTime()));
-        if (end > start) busyRanges.push({ start, end });
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+    const slots: Array<{ startTime: Date; endTime: Date; duration: number; procedure: string }> = [];
+
+    // First slot: from working hours start to first appointment
+    if (dayAppointments.length === 0) {
+      const startTime = new Date(date);
+      startTime.setHours(workingHours.start, 0, 0, 0);
+      const endTime = new Date(date);
+      endTime.setHours(workingHours.end, 0, 0, 0);
+      const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+      slots.push({
+        startTime,
+        endTime,
+        duration,
+        procedure: getProcedureByDuration(duration)
       });
-
-    blockedPeriods.forEach(period => {
-      const periodStart = period.start instanceof Date ? period.start : new Date(period.start);
-      const periodEnd = period.end instanceof Date ? period.end : new Date(period.end);
-
-      if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) return;
-      if (periodStart.toDateString() !== date.toDateString()) return;
-
-      const start = new Date(Math.max(periodStart.getTime(), effectiveStart.getTime()));
-      const end = new Date(Math.min(periodEnd.getTime(), workEnd.getTime()));
-      if (end > start) busyRanges.push({ start, end });
-    });
-
-    const sortedBusy = busyRanges.sort((a, b) => a.start.getTime() - b.start.getTime());
-    const mergedBusy: Array<{ start: Date; end: Date }> = [];
-
-    sortedBusy.forEach(range => {
-      const last = mergedBusy[mergedBusy.length - 1];
-      if (!last || range.start > last.end) {
-        mergedBusy.push({ start: new Date(range.start), end: new Date(range.end) });
-        return;
-      }
-      if (range.end > last.end) {
-        last.end = new Date(range.end);
-      }
-    });
-
-    const slots: FreeSlot[] = [];
-    let cursor = new Date(effectiveStart);
-
-    mergedBusy.forEach(range => {
-      if (range.start > cursor) {
-        const duration = (range.start.getTime() - cursor.getTime()) / (1000 * 60);
-        if (duration >= minSlotMinutes) {
-          slots.push({ startTime: new Date(cursor), endTime: new Date(range.start), duration });
+    } else {
+      // First slot: before first appointment
+      const firstAppStart = new Date(dayAppointments[0].start_time);
+      if (firstAppStart.getHours() > workingHours.start) {
+        const startTime = new Date(date);
+        startTime.setHours(workingHours.start, 0, 0, 0);
+        const duration = (firstAppStart.getTime() - startTime.getTime()) / (1000 * 60);
+        if (duration >= 15) {
+          slots.push({
+            startTime,
+            endTime: firstAppStart,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
         }
       }
-      if (range.end > cursor) {
-        cursor = new Date(range.end);
-      }
-    });
 
-    if (cursor < workEnd) {
-      const duration = (workEnd.getTime() - cursor.getTime()) / (1000 * 60);
-      if (duration >= minSlotMinutes) {
-        slots.push({ startTime: new Date(cursor), endTime: new Date(workEnd), duration });
+      // Slots between appointments
+      for (let i = 0; i < dayAppointments.length - 1; i++) {
+        const currentAppEnd = new Date(dayAppointments[i].end_time);
+        const nextAppStart = new Date(dayAppointments[i + 1].start_time);
+        const duration = (nextAppStart.getTime() - currentAppEnd.getTime()) / (1000 * 60);
+
+        if (duration >= 15) {
+          slots.push({
+            startTime: currentAppEnd,
+            endTime: nextAppStart,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
+        }
+      }
+
+      // Last slot: after last appointment
+      const lastAppEnd = new Date(dayAppointments[dayAppointments.length - 1].end_time);
+      if (lastAppEnd.getHours() < workingHours.end) {
+        const endTime = new Date(date);
+        endTime.setHours(workingHours.end, 0, 0, 0);
+        const duration = (endTime.getTime() - lastAppEnd.getTime()) / (1000 * 60);
+        if (duration >= 15) {
+          slots.push({
+            startTime: lastAppEnd,
+            endTime,
+            duration,
+            procedure: getProcedureByDuration(duration)
+          });
+        }
       }
     }
 
-    return { count: slots.length, slots };
-  }
-
-  const findAvailableSlots = (date: Date, workingHours = { start: 8, end: 18 }) => {
-    const workingRange: WorkingHoursRange = {
-      start: `${String(workingHours.start).padStart(2, '0')}:00`,
-      end: `${String(workingHours.end).padStart(2, '0')}:00`
-    };
-
-    const result = calculateDailyOpportunities({
-      appointments,
-      date,
-      workingHours: workingRange,
-      minSlotMinutes: 15,
-      nowRef: now
-    });
-
-    return result.slots
-      .map(slot => ({
-        ...slot,
-        procedure: getProcedureByDuration(slot.duration)
-      }))
-      .sort((a, b) => b.duration - a.duration);
+    return slots.sort((a, b) => b.duration - a.duration); // Sort by duration (biggest first)
   };
 
   const handleCreateAppointment = async (e: React.FormEvent) => {
@@ -1790,25 +1610,24 @@ export default function App() {
         end_time: endTime.toISOString()
       };
 
-      const res = await apiFetch(editingAppointment ? `/api/appointments/${editingAppointment.id}` : '/api/appointments', {
-        method: editingAppointment ? 'PUT' : 'POST',
+      const res = await apiFetch('/api/appointments', {
+        method: 'POST',
         body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok) {
         setIsModalOpen(false);
         setSuggestedSlot(null);
-        setEditingAppointment(null);
         fetchData();
 
         setNewAppointment({ patient_id: '', dentist_id: '', date: '', time: '', duration: '', notes: '' });
-        showNotification(editingAppointment ? 'Agendamento atualizado com sucesso!' : 'Agendamento realizado com sucesso!');
+        showNotification('Agendamento realizado com sucesso!');
       } else {
-        showNotification(data.error || (editingAppointment ? 'Erro ao atualizar agendamento' : 'Erro ao realizar agendamento'), 'error');
+        showNotification(data.error || 'Erro ao realizar agendamento', 'error');
       }
     } catch (error) {
       console.error('Error creating appointment:', error);
-      showNotification(editingAppointment ? 'Erro de conexão ao atualizar agendamento' : 'Erro de conexão ao realizar agendamento', 'error');
+      showNotification('Erro de conexão ao realizar agendamento', 'error');
     }
   };
 
@@ -2516,7 +2335,7 @@ export default function App() {
       <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full max-w-full print:p-0 pb-24 md:pb-8">
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeTab}
+            key={activeTab + (searchTerm ? '-search' : '')}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -2592,7 +2411,6 @@ export default function App() {
                 setIsModalOpen={setIsModalOpen}
                 setActiveTab={setActiveTab}
                 sendReminder={sendReminder}
-                onReschedule={(appointment) => openEditAppointmentModal(appointment, true)}
               />
             )}
 
@@ -2608,7 +2426,7 @@ export default function App() {
                       </span>
                     </div>
                     <button 
-                      onClick={openAppointmentModal}
+                      onClick={() => setIsModalOpen(true)}
                       className="bg-primary text-white px-6 py-3 rounded-full font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-all shadow-lg shadow-primary/10 active:scale-95 text-sm"
                     >
                       <Plus size={18} strokeWidth={3} />
@@ -2665,10 +2483,10 @@ export default function App() {
                   <div className="divide-y divide-slate-100">
                     {(() => {
                       const getFilteredAppointments = () => {
-                        // Show all statuses to allow visibility of all appointments
+                        // For day view, include FINISHED status to show completed appointments
                         const effectiveStatusFilter = agendaViewMode === 'day' 
                           ? [...statusFilter, 'FINISHED'].filter((v, i, a) => a.indexOf(v) === i) // Remove duplicates
-                          : [...statusFilter, 'FINISHED', 'CANCELLED', 'NO_SHOW'].filter((v, i, a) => a.indexOf(v) === i); // Include all statuses in week/month
+                          : statusFilter;
                         
                         let filtered = appointments.filter(a => effectiveStatusFilter.length === 0 || effectiveStatusFilter.includes(a.status))
                           .filter(a => agendaSearchTerm === '' || (a.patient_name || '').toLowerCase().includes((agendaSearchTerm || '').toLowerCase()));
@@ -2682,24 +2500,19 @@ export default function App() {
                             return isSelectedDate || isFinishedPast;
                           });
                         } else if (agendaViewMode === 'week') {
-                          // Use selected date for week calculation
-                          const dateToUse = selectedDate || new Date();
-                          const startOfWeek = new Date(dateToUse);
-                          startOfWeek.setDate(dateToUse.getDate() - dateToUse.getDay());
-                          startOfWeek.setHours(0, 0, 0, 0);
+                          const startOfWeek = new Date(selectedDate);
+                          startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
                           const endOfWeek = new Date(startOfWeek);
                           endOfWeek.setDate(startOfWeek.getDate() + 6);
-                          endOfWeek.setHours(23, 59, 59, 999);
 
                           filtered = filtered.filter(a => {
                             const appDate = new Date(a.start_time);
                             return appDate >= startOfWeek && appDate <= endOfWeek;
                           });
                         } else if (agendaViewMode === 'month') {
-                          const dateToUse = selectedDate || new Date();
                           filtered = filtered.filter(a => {
                             const appDate = new Date(a.start_time);
-                            return appDate.getMonth() === dateToUse.getMonth() && appDate.getFullYear() === dateToUse.getFullYear();
+                            return appDate.getMonth() === selectedDate.getMonth() && appDate.getFullYear() === selectedDate.getFullYear();
                           });
                         }
 
@@ -2708,7 +2521,7 @@ export default function App() {
 
                       const filtered = getFilteredAppointments();
 
-                      if (filtered.length === 0 && agendaViewMode !== 'month') {
+                      if (filtered.length === 0 && agendaViewMode === 'day') {
                         return (
                           <div className="p-20 text-center">
                             <Calendar className="mx-auto text-slate-200 mb-4" size={64} />
@@ -2756,28 +2569,24 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                <select
-                                  value={app.status}
-                                  onChange={(e) => updateStatus(app.id, e.target.value as Appointment['status'])}
-                                  className="px-2 sm:px-3 py-1 sm:py-2 bg-white border border-slate-200 rounded text-xs sm:text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none whitespace-nowrap shrink-0"
-                                >
-                                  <option value="SCHEDULED">Agendado</option>
-                                  <option value="CONFIRMED">Confirmado</option>
-                                  <option value="IN_PROGRESS">Em Andamento</option>
-                                  <option value="FINISHED">Finalizado</option>
-                                  <option value="CANCELLED">Cancelado</option>
-                                  <option value="NO_SHOW">Faltou</option>
-                                </select>
+                                {!isFocusMode && (
+                                  <select
+                                    value={app.status}
+                                    onChange={(e) => updateStatus(app.id, e.target.value as Appointment['status'])}
+                                    className="px-2 sm:px-3 py-1 sm:py-2 bg-white border border-slate-200 rounded text-xs sm:text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none whitespace-nowrap shrink-0"
+                                  >
+                                    <option value="SCHEDULED">Agendado</option>
+                                    <option value="CONFIRMED">Confirmado</option>
+                                    <option value="IN_PROGRESS">Em Andamento</option>
+                                    <option value="FINISHED">Finalizado</option>
+                                    <option value="CANCELLED">Cancelado</option>
+                                    <option value="NO_SHOW">Faltou</option>
+                                  </select>
+                                )}
                               </div>
 
                               {/* Action buttons */}
                               <div className="flex items-center gap-2 flex-wrap">
-                                <button 
-                                  onClick={() => openEditAppointmentModal(app)}
-                                  className="px-4 py-2.5 border border-slate-200 text-slate-600 font-bold text-xs sm:text-sm rounded-full hover:bg-slate-50 transition-all"
-                                >
-                                  Editar
-                                </button>
                                 <button 
                                   onClick={() => {
                                     const patient = patients.find(p => p.id === app.patient_id);
@@ -2805,7 +2614,33 @@ export default function App() {
                         );
                       };
 
-                      if (agendaFocusMode) {
+                      const renderSuggestion = (slot: FreeSlot) => {
+                        const suggestion = getSuggestion(slot.duration);
+                        return (
+                          <div
+                            key={`suggestion-${slot.start}-${slot.end}`}
+                            className="py-1 px-6 hover:bg-slate-50 transition-colors cursor-pointer group"
+                            onClick={() => {
+                              // Pre-fill new appointment form
+                              setNewAppointment({
+                                patient_id: '',
+                                dentist_id: user?.id ? user.id.toString() : '',
+                                date: selectedDate.toISOString().split('T')[0],
+                                time: slot.start.replace(':', ''),
+                                duration: slot.duration.toString(),
+                                notes: suggestion
+                              });
+                              setIsModalOpen(true);
+                            }}
+                          >
+                            <span className="text-xs text-gray-500">
+                              💡 {slot.start} – {slot.end}   {suggestion}
+                            </span>
+                          </div>
+                        );
+                      };
+
+                      if (agendaFocusMode && agendaViewMode === 'day') {
                         const todayStr = new Date().toDateString();
                         const isToday = selectedDate.toDateString() === todayStr;
                         const todayApps = filtered.filter(a => new Date(a.start_time).toDateString() === todayStr);
@@ -2841,8 +2676,8 @@ export default function App() {
 
                       // Full Agenda Mode - Different views based on agendaViewMode
                       if (agendaViewMode === 'week') {
-                        // Week grid view (show selected week)
-                        const current = selectedDate || new Date();
+                        // Week grid view (always show current week)
+                        const current = new Date();
                         const startOfWeek = new Date(current);
                         startOfWeek.setDate(current.getDate() - current.getDay());
                         
@@ -2853,18 +2688,18 @@ export default function App() {
                           weekDays.push(day);
                         }
 
-                        // Calculate earliest and latest appointment times for the week
-                        let earliestHour = 6;
-                        let latestHour = 22;
+                        // Keep weekly grid broad enough to always include suggestion hours
+                        let earliestHour = 8;
+                        let latestHour = 18;
                         
                         if (filtered.length > 0) {
                           const hours = filtered.map(a => new Date(a.start_time).getHours());
                           earliestHour = Math.min(...hours);
                           latestHour = Math.max(...hours);
                           
-                          // Add one hour buffer before and after
-                          earliestHour = Math.max(0, earliestHour - 1);
-                          latestHour = Math.min(23, latestHour + 1);
+                          // Add one hour buffer before and after while always including 08:00-18:00
+                          earliestHour = Math.max(0, Math.min(8, earliestHour - 1));
+                          latestHour = Math.min(23, Math.max(18, latestHour + 1));
                         }
 
                         const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -2873,109 +2708,491 @@ export default function App() {
                           timeSlots.push(h);
                         }
 
+                        const timeToMinutes = (time: string) => {
+                          const [h, m] = time.split(':').map(Number);
+                          return h * 60 + m;
+                        };
+
+                        const weekdayCandidates = weekDays.map((day, idx) => {
+                          const dayOfWeek = day.getDay();
+                          if (dayOfWeek === 0 || dayOfWeek === 6) {
+                            return null;
+                          }
+
+                          const dayAppointments = filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate.toDateString() === day.toDateString() && a.status !== 'CANCELLED';
+                          });
+
+                          const validSlots = getFreeSlots(dayAppointments, '08:00', '18:00')
+                            .filter(slot => slot.duration >= 30)
+                            .map(slot => ({
+                              ...slot,
+                              startMin: timeToMinutes(slot.start),
+                              endMin: timeToMinutes(slot.end)
+                            }));
+
+                          if (validSlots.length === 0) return null;
+
+                          const bestSlot = validSlots.sort((a, b) => b.duration - a.duration)[0];
+
+                          return {
+                            ...bestSlot,
+                            day,
+                            dayIndex: idx,
+                            appointmentCount: dayAppointments.length
+                          };
+                        }).filter(Boolean);
+
+                        const workdayAppointmentCount = weekDays.reduce((total, day) => {
+                          const dayOfWeek = day.getDay();
+                          if (dayOfWeek === 0 || dayOfWeek === 6) {
+                            return total;
+                          }
+
+                          return total + filtered.filter(a => {
+                            const appDate = new Date(a.start_time);
+                            return appDate.toDateString() === day.toDateString() && a.status !== 'CANCELLED';
+                          }).length;
+                        }, 0);
+
+                        const isMostlyEmptyWeek = workdayAppointmentCount <= 2;
+                        const allWorkdaysCompletelyFree = workdayAppointmentCount === 0;
+                        const maxSuggestionDays = allWorkdaysCompletelyFree ? 1 : 2;
+                        const limitedCandidates = isMostlyEmptyWeek
+                          ? weekdayCandidates
+                              .sort((a, b) => {
+                                const appointmentWeight = (b.appointmentCount - a.appointmentCount) * 1000;
+                                const durationWeight = b.duration - a.duration;
+                                const dayWeight = a.dayIndex - b.dayIndex;
+                                return appointmentWeight || durationWeight || dayWeight;
+                              })
+                              .slice(0, Math.min(maxSuggestionDays, weekdayCandidates.length))
+                          : weekdayCandidates;
+
+                        const weekBestSlots = weekDays.map((_, idx) => {
+                          return limitedCandidates.find(candidate => candidate.dayIndex === idx) || null;
+                        });
+
                         return (
                           <div className="space-y-4">
-                            {/* Week header with day names and dates */}
-                            <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
-                              <div className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border border-slate-200 rounded-2xl overflow-hidden shadow-sm divide-x divide-slate-200">
+                            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-2">
+                              <div className="min-w-[760px] space-y-4">
+                                {/* Week header with day names and dates */}
+                                <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
+                                  <div className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border border-slate-200 rounded-2xl overflow-hidden shadow-sm divide-x divide-slate-200">
                                 {/* Time column header */}
-                                <div className="bg-slate-50 p-2 flex items-center justify-center">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase">Hora</span>
-                                </div>
-                                
-                                {/* Day headers */}
-                                {weekDays.map((day, idx) => {
-                                  const isToday = day.toDateString() === new Date().toDateString();
-                                  return (
-                                    <div 
-                                      key={idx} 
-                                      className={`p-3 text-center ${
-                                        isToday ? 'bg-primary/10' : 'bg-slate-50'
-                                      }`}
-                                    >
-                                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                                        {dayLabels[idx]}
-                                      </div>
-                                      <div className={`text-lg font-bold mt-1 ${isToday ? 'text-primary' : 'text-slate-900'}`}>
-                                        {day.getDate()}
-                                      </div>
-                                      {isToday && (
-                                        <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
-                                      )}
+                                    <div className="bg-slate-50 p-2 flex items-center justify-center">
+                                      <span className="text-[10px] font-bold text-slate-400 uppercase">Hora</span>
                                     </div>
-                                  );
-                                })}
+                                
+                                    {/* Day headers */}
+                                    {weekDays.map((day, idx) => {
+                                      const isToday = day.toDateString() === new Date().toDateString();
+                                      const bestSlotSuggestion = weekBestSlots[idx];
+                                      return (
+                                        <div 
+                                          key={idx} 
+                                          className={`p-3 text-center relative ${
+                                            isToday ? 'bg-primary/10' : 'bg-slate-50'
+                                          }`}
+                                        >
+                                          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            {dayLabels[idx]}
+                                          </div>
+                                          <div className={`text-lg font-bold mt-1 ${isToday ? 'text-primary' : 'text-slate-900'}`}>
+                                            {day.getDate()}
+                                          </div>
+                                          {isToday && (
+                                            <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
+                                          )}
+                                          {bestSlotSuggestion && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setWeekSuggestionSheet({
+                                                  date: day,
+                                                  start: bestSlotSuggestion.start,
+                                                  end: bestSlotSuggestion.end,
+                                                  duration: bestSlotSuggestion.duration,
+                                                  procedure: getSuggestion(bestSlotSuggestion.duration)
+                                                });
+                                              }}
+                                              className="absolute top-1 right-1 z-10 text-[10px] leading-none text-slate-500 bg-white/80 rounded px-0.5 hover:text-slate-600 transition-colors"
+                                              title="Ver sugestao"
+                                            >
+                                              💡
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Time slots grid */}
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                  {timeSlots.map(hour => (
+                                    <div key={hour} className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border-b border-slate-200 last:border-b-0 min-h-[60px] divide-x divide-slate-200">
+                                      {/* Time label */}
+                                      <div className="bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
+                                        <span className="text-[10px] font-bold text-slate-400">
+                                          {String(hour).padStart(2, '0')}:00
+                                        </span>
+                                      </div>
+  
+                                      {/* Day columns */}
+                                      {weekDays.map((day, dayIdx) => {
+                                        const dayAppointments = filtered.filter(a => {
+                                          const appDate = new Date(a.start_time);
+                                          const appHour = appDate.getHours();
+                                          // Show appointment if it starts in this hour
+                                          return appDate.toDateString() === day.toDateString() && appHour === hour;
+                                        }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                                        const isToday = day.toDateString() === new Date().toDateString();
+                                        return (
+                                          <div 
+                                            key={dayIdx}
+                                            className={`p-1.5 relative ${
+                                              isToday ? 'bg-primary/5' : 'bg-white'
+                                            } hover:bg-slate-50 transition-colors`}
+                                          >
+                                            <div className="space-y-1">
+                                              {dayAppointments.slice(0, 3).map(app => {
+                                                const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
+                                                const colors = getProcedureColor(app.notes || '');
+                                                return (
+                                                  <div
+                                                    key={app.id}
+                                                    style={{
+                                                      backgroundColor: colors.bg,
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
+                                                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
+                                                    className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                    title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                                                    onClick={() => setWeekSheetSelectedAppointment(app)}
+                                                  >
+                                                    <div className="truncate leading-tight">{firstName}</div>
+                                                    <div className="text-[7px] opacity-90 leading-tight">
+                                                      {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                              {dayAppointments.length > 3 && (
+                                                <div className="text-[7px] text-primary font-bold px-1 py-0.5">
+                                                  +{dayAppointments.length - 3}
+                                                </div>
+                                              )}
+                                            </div>
+                                        </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             </div>
 
-                            {/* Time slots grid */}
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                              {timeSlots.map(hour => (
-                                <div key={hour} className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border-b border-slate-200 last:border-b-0 min-h-[60px] divide-x divide-slate-200">
-                                  {/* Time label */}
-                                  <div className="bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
-                                    <span className="text-[10px] font-bold text-slate-400">
-                                      {String(hour).padStart(2, '0')}:00
-                                    </span>
+                            {/* Bottom Sheet for selected appointment in week view */}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setWeekSheetSelectedAppointment(null)}
+                              />
+                            )}
+                            {weekSheetSelectedAppointment && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-32"
+                              >
+                                <div className="p-6 space-y-6">
+                                  {/* Close button and header */}
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <h3 className="text-2xl font-bold text-slate-900">
+                                        {new Date(weekSheetSelectedAppointment.start_time).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', weekday: 'long' })}
+                                      </h3>
+                                      <p className="text-sm text-slate-500 mt-1">Detalhes do Agendamento</p>
+                                    </div>
+                                    <button
+                                      onClick={() => setWeekSheetSelectedAppointment(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={24} className="text-slate-400" />
+                                    </button>
                                   </div>
 
-                                  {/* Day columns */}
-                                  {weekDays.map((day, dayIdx) => {
-                                    const dayAppointments = filtered.filter(a => {
-                                      const appDate = new Date(a.start_time);
-                                      const appHour = appDate.getHours();
-                                      // Show appointment if it starts in this hour
-                                      return appDate.toDateString() === day.toDateString() && appHour === hour;
-                                    }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+                                  {/* Appointment details */}
+                                  <div className="pt-4 space-y-6">
+                                    {/* Time and duration */}
+                                    <div className="space-y-2">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Horário</p>
+                                      <div className="flex items-center gap-4">
+                                        <div>
+                                          <p className="text-2xl font-bold text-primary">
+                                            {new Date(weekSheetSelectedAppointment.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                          <p className="text-[10px] text-slate-400 mt-1">
+                                            {(() => {
+                                              const start = new Date(weekSheetSelectedAppointment.start_time);
+                                              const end = new Date(weekSheetSelectedAppointment.end_time);
+                                              const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+                                              return `${mins}min`;
+                                            })()}
+                                          </p>
+                                        </div>
+                                        <div className="h-12 w-[1px] bg-slate-200" />
+                                        <div>
+                                          <p className="text-sm text-slate-500">Término</p>
+                                          <p className="text-lg font-bold text-slate-700 mt-0.5">
+                                            {new Date(weekSheetSelectedAppointment.end_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
 
+                                    {/* Patient info */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-3">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Paciente</p>
+                                      <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 overflow-hidden border border-slate-200 shrink-0">
+                                          {(() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            return patient?.photo_url ? (
+                                              <img src={patient.photo_url} alt={weekSheetSelectedAppointment.patient_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                            ) : (
+                                              <UserCircle size={24} />
+                                            );
+                                          })()}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="font-bold text-slate-900">{weekSheetSelectedAppointment.patient_name}</p>
+                                          <p className="text-sm text-slate-500 truncate">{weekSheetSelectedAppointment.notes || 'Consulta'}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Status and controls */}
+                                    <div className="border-t border-slate-100 pt-6 space-y-4">
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ações</p>
+                                      <div className="space-y-3">
+                                        <select
+                                          value={weekSheetSelectedAppointment.status}
+                                          onChange={(e) => {
+                                            updateStatus(weekSheetSelectedAppointment.id, e.target.value as Appointment['status']);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full px-4 py-3 text-sm bg-white border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        >
+                                          <option value="SCHEDULED">Agendado</option>
+                                          <option value="CONFIRMED">Confirmado</option>
+                                          <option value="IN_PROGRESS">Em Andamento</option>
+                                          <option value="FINISHED">Finalizado</option>
+                                          <option value="CANCELLED">Cancelado</option>
+                                          <option value="NO_SHOW">Faltou</option>
+                                        </select>
+
+                                        <button
+                                          onClick={() => {
+                                            const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
+                                            if (patient) openPatientRecord(patient.id);
+                                            setActiveTab('prontuario');
+                                            navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                                        >
+                                          <Activity size={18} />
+                                          Iniciar Atendimento
+                                        </button>
+
+                                        <button
+                                          onClick={() => {
+                                            sendReminder(weekSheetSelectedAppointment);
+                                            setWeekSheetSelectedAppointment(null);
+                                          }}
+                                          className="w-full bg-slate-50 text-primary px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-slate-100 transition-all border border-slate-200"
+                                        >
+                                          <MessageCircle size={18} />
+                                          Enviar Lembrete WhatsApp
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+
+                            {/* Bottom Sheet for weekly suggestion */}
+                            {weekSuggestionSheet && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[999] bg-slate-900/40 backdrop-blur-sm"
+                                onClick={() => setWeekSuggestionSheet(null)}
+                              />
+                            )}
+                            {weekSuggestionSheet && (
+                              <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed inset-x-0 bottom-0 z-[1000] bg-white rounded-t-3xl shadow-2xl max-h-[90vh] overflow-y-auto pb-24"
+                              >
+                                <div className="p-6 space-y-5">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-base font-semibold text-slate-800">Sugestao</p>
+                                    <button
+                                      onClick={() => setWeekSuggestionSheet(null)}
+                                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                    >
+                                      <X size={20} className="text-slate-400" />
+                                    </button>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <p className="text-sm text-slate-600">
+                                      {weekSuggestionSheet.start} - {weekSuggestionSheet.end}
+                                    </p>
+                                    <p className="text-sm text-slate-600">{weekSuggestionSheet.procedure}</p>
+                                  </div>
+
+                                  <button
+                                    onClick={() => {
+                                      setNewAppointment({
+                                        patient_id: '',
+                                        dentist_id: user?.id ? user.id.toString() : '',
+                                        date: weekSuggestionSheet.date.toISOString().split('T')[0],
+                                        time: weekSuggestionSheet.start.replace(':', ''),
+                                        duration: String(weekSuggestionSheet.duration),
+                                        notes: weekSuggestionSheet.procedure
+                                      });
+                                      setWeekSuggestionSheet(null);
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-all"
+                                  >
+                                    Agendar
+                                  </button>
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+
+                        return (
+                          <div className="space-y-6">
+                            {/* Week grid */}
+                            <div className="space-y-4">
+                              {/* Week header with day names and dates */}
+                              <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
+                                <div className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border border-slate-200 rounded-2xl overflow-hidden shadow-sm divide-x divide-slate-200">
+                                  {/* Time column header */}
+                                  <div className="bg-slate-50 p-2 flex items-center justify-center">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Hora</span>
+                                  </div>
+                                  
+                                  {/* Day headers */}
+                                  {weekDays.map((day, idx) => {
                                     const isToday = day.toDateString() === new Date().toDateString();
-
                                     return (
                                       <div 
-                                        key={dayIdx}
-                                        className={`p-1.5 relative ${
-                                          isToday ? 'bg-primary/5' : 'bg-white'
-                                        } hover:bg-slate-50 transition-colors`}
+                                        key={idx} 
+                                        className={`p-3 text-center ${
+                                          isToday ? 'bg-primary/10' : 'bg-slate-50'
+                                        }`}
                                       >
-                                        <div className="space-y-1">
-                                          {dayAppointments.slice(0, 3).map(app => {
-                                            const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
-                                            const colors = getProcedureColor(app.notes || '');
-                                            const isFinished = getEffectiveStatus(app) === 'FINISHED';
-                                            const cardBgColor = isFinished ? '#F8FAFC' : colors.bg;
-                                            const cardHoverColor = isFinished ? '#F8FAFC' : colors.hover;
-                                            return (
-                                              <div
-                                                key={app.id}
-                                                style={{
-                                                  backgroundColor: cardBgColor,
-                                                }}
-                                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = cardHoverColor}
-                                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = cardBgColor}
-                                                className={`rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden ${
-                                                  isFinished ? 'text-slate-400 border border-slate-200' : 'text-white'
-                                                }`}
-                                                title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
-                                                onClick={() => setWeekSheetSelectedAppointment(app)}
-                                              >
-                                                <div className="truncate leading-tight">{firstName}</div>
-                                                <div className="text-[7px] opacity-90 leading-tight">
-                                                  {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
-                                          {dayAppointments.length > 3 && (
-                                            <div className="text-[7px] text-primary font-bold px-1 py-0.5">
-                                              +{dayAppointments.length - 3}
-                                            </div>
-                                          )}
+                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                          {dayLabels[idx]}
                                         </div>
+                                        <div className={`text-lg font-bold mt-1 ${isToday ? 'text-primary' : 'text-slate-900'}`}>
+                                          {day.getDate()}
+                                        </div>
+                                        {isToday && (
+                                          <div className="w-1.5 h-1.5 rounded-full bg-primary mx-auto mt-1" />
+                                        )}
                                       </div>
                                     );
                                   })}
                                 </div>
-                              ))}
+                              </div>
+
+                              {/* Time slots grid */}
+                              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                {timeSlots.map(hour => (
+                                  <div key={hour} className="grid grid-cols-[80px_repeat(7,1fr)] gap-0 border-b border-slate-200 last:border-b-0 min-h-[60px] divide-x divide-slate-200">
+                                    {/* Time label */}
+                                    <div className="bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
+                                      <span className="text-[10px] font-bold text-slate-400">
+                                        {String(hour).padStart(2, '0')}:00
+                                      </span>
+                                    </div>
+
+                                    {/* Day columns */}
+                                    {weekDays.map((day, dayIdx) => {
+                                      const dayAppointments = filtered.filter(a => {
+                                        const appDate = new Date(a.start_time);
+                                        const appHour = appDate.getHours();
+                                        // Show appointment if it starts in this hour
+                                        return appDate.toDateString() === day.toDateString() && appHour === hour;
+                                      }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                                      const isToday = day.toDateString() === new Date().toDateString();
+
+                                      return (
+                                        <div 
+                                          key={dayIdx}
+                                          className={`p-1.5 relative ${
+                                            isToday ? 'bg-primary/5' : 'bg-white'
+                                          } hover:bg-slate-50 transition-colors`}
+                                        >
+                                          <div className="space-y-1">
+                                            {dayAppointments.slice(0, 3).map(app => {
+                                              const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
+                                              const colors = getProcedureColor(app.notes || '');
+                                              return (
+                                                <div
+                                                  key={app.id}
+                                                  style={{
+                                                    backgroundColor: colors.bg,
+                                                  }}
+                                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
+                                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
+                                                  className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                  title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                                                  onClick={() => setWeekSheetSelectedAppointment(app)}
+                                                >
+                                                  <div className="truncate leading-tight">{firstName}</div>
+                                                  <div className="text-[7px] opacity-90 leading-tight">
+                                                    {new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                            {dayAppointments.length > 3 && (
+                                              <div className="text-[7px] text-primary font-bold px-1 py-0.5">
+                                                +{dayAppointments.length - 3}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
 
                             {/* Bottom Sheet for selected appointment in week view */}
@@ -3400,7 +3617,6 @@ export default function App() {
                                             });
                                           }
                                           setMonthSheetSelectedDay(null);
-                                          setEditingAppointment(null);
                                           setIsModalOpen(true);
                                         }}
                                         className="bg-primary text-white px-6 py-3 rounded-full font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2 mx-auto"
@@ -3419,20 +3635,18 @@ export default function App() {
                       }
 
                       // Day view - Group by time periods
-                      const currentDate = new Date();
-                      const currentDateString = currentDate.toDateString();
+                      const todayAppointments = filtered.filter(a => {
+                        const appDate = new Date(a.start_time);
+                        return appDate.toDateString() === selectedDate.toDateString();
+                      });
+
+                      // Calculate free slots for suggestions
+                      const freeSlots = getFreeSlots(todayAppointments);
 
                       const pastFinishedAppointments = filtered.filter(a => {
                         const appDate = new Date(a.start_time);
-                        return a.status === 'FINISHED' && appDate < currentDate && appDate.toDateString() === currentDateString;
+                        return a.status === 'FINISHED' && appDate < new Date() && appDate.toDateString() !== selectedDate.toDateString();
                       }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()); // Most recent first
-
-                      const todayAppointments = filtered.filter(a => {
-                        const appDate = new Date(a.start_time);
-                        const isSelectedDay = appDate.toDateString() === selectedDate.toDateString();
-                        const isFinishedEarlierToday = selectedDate.toDateString() === currentDateString && a.status === 'FINISHED' && appDate < currentDate;
-                        return isSelectedDay && !isFinishedEarlierToday;
-                      });
 
                       const morning = todayAppointments.filter(a => {
                         const hour = new Date(a.start_time).getHours();
@@ -3447,7 +3661,7 @@ export default function App() {
                         return hour >= 18 && hour < 22;
                       });
 
-                      const isToday = selectedDate.toDateString() === currentDateString;
+                      const isToday = selectedDate.toDateString() === new Date().toDateString();
 
                       const renderNowIndicator = () => (
                         <div key="now-indicator" className="py-4 px-6 flex items-center gap-3">
@@ -3465,28 +3679,47 @@ export default function App() {
                         
                         if (apps.length === 0 && !showNowInThisPeriod) return null;
 
-                        let content;
-                        if (!showNowInThisPeriod) {
-                          content = apps.map(app => renderAppointment(app));
-                        } else {
+                        // Filter free slots for this period
+                        const periodFreeSlots = freeSlots.filter(slot => {
+                          const slotHour = parseInt(slot.start.split(':')[0]);
+                          return slotHour >= periodStart && slotHour < periodEnd;
+                        });
+
+                        // Create timeline items: appointments and suggestions
+                        const timelineItems: Array<{ type: 'appointment' | 'suggestion' | 'now', item: any, time: number }> = [];
+
+                        // Add appointments
+                        apps.forEach(app => {
+                          const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
+                          timelineItems.push({ type: 'appointment', item: app, time: appTime });
+                        });
+
+                        // Add suggestions
+                        periodFreeSlots.forEach(slot => {
+                          const slotTime = parseInt(slot.start.split(':')[0]) * 60 + parseInt(slot.start.split(':')[1]);
+                          timelineItems.push({ type: 'suggestion', item: slot, time: slotTime });
+                        });
+
+                        // Add now indicator if in this period
+                        if (showNowInThisPeriod) {
                           const nowTime = now.getHours() * 60 + now.getMinutes();
-                          const result = [];
-                          let nowInserted = false;
-                          
-                          for (const app of apps) {
-                            const appTime = new Date(app.start_time).getHours() * 60 + new Date(app.start_time).getMinutes();
-                            if (!nowInserted && nowTime < appTime) {
-                              result.push(renderNowIndicator());
-                              nowInserted = true;
-                            }
-                            result.push(renderAppointment(app));
-                          }
-                          
-                          if (!nowInserted) {
-                            result.push(renderNowIndicator());
-                          }
-                          content = result;
+                          timelineItems.push({ type: 'now', item: null, time: nowTime });
                         }
+
+                        // Sort by time
+                        timelineItems.sort((a, b) => a.time - b.time);
+
+                        // Render content
+                        const content = timelineItems.map(({ type, item }) => {
+                          if (type === 'appointment') {
+                            return renderAppointment(item);
+                          } else if (type === 'suggestion') {
+                            return renderSuggestion(item);
+                          } else if (type === 'now') {
+                            return renderNowIndicator();
+                          }
+                          return null;
+                        });
 
                         return (
                           <div key={label} className="py-2">
@@ -3523,207 +3756,903 @@ export default function App() {
             )}
 
             {activeTab === 'pacientes' && (
-              <div className="space-y-4 pt-10 px-2 max-w-2xl mx-auto">
-                <header className="space-y-1.5 mb-4 px-2">
-                  <h1 className="text-[28px] font-bold tracking-tight text-[#1C1C1E]">Pacientes</h1>
-                  <p className="text-[14px] font-normal text-slate-400">
-                    Acompanhe prioridades e oportunidades do dia
-                  </p>
-                </header>
+              <div className="space-y-4 pt-10">
+                {(() => {
+                  // ---------- stats ----------
+                  const allMetas = patients.map(p => ({ patient: p, meta: getPatientCardMeta(p) }));
+                  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+                  const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+                  const totalOverdue = allMetas.filter(x => x.meta.attentionStatus.key === 'overdue').length;
+                  const todayAppointments = appointments.filter(app => {
+                    const appDate = new Date(app.start_time);
+                    return appDate >= todayStart && appDate <= todayEnd && app.status !== 'CANCELLED';
+                  });
+                  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                  const freeSlotsToday = getFreeSlots(todayAppointments, '08:00', '18:00', nowHHMM).filter(slot => slot.duration >= 30).length;
+                  const showPatientsFeedback = (message: string) => {
+                    setPatientsInlineFeedback(message);
+                    window.setTimeout(() => setPatientsInlineFeedback(''), 2400);
+                  };
+                  const opportunitiesToday = allMetas.filter(({ patient, meta }) => {
+                    if (meta.attentionStatus.key === 'up-to-date') return false;
+                    return !appointments.some(app =>
+                      app.patient_id === patient.id &&
+                      new Date(app.start_time) >= todayStart &&
+                      new Date(app.start_time) <= todayEnd &&
+                      app.status !== 'CANCELLED'
+                    );
+                  }).length;
+                  const handledToday = appointments.filter(app =>
+                    app.status === 'FINISHED' &&
+                    new Date(app.start_time) >= todayStart &&
+                    new Date(app.start_time) <= todayEnd
+                  ).length;
+                  const opportunityCandidates = allMetas
+                    .filter(({ patient, meta }) => {
+                      if (meta.attentionStatus.key === 'up-to-date') return false;
+                      return !appointments.some(app =>
+                        app.patient_id === patient.id &&
+                        new Date(app.start_time) >= todayStart &&
+                        new Date(app.start_time) <= todayEnd &&
+                        app.status !== 'CANCELLED'
+                      );
+                    })
+                    .sort((a, b) => {
+                      const attentionPriority = { overdue: 0, review: 1, 'up-to-date': 2 } as const;
+                      const attentionDiff =
+                        attentionPriority[a.meta.attentionStatus.key as keyof typeof attentionPriority] -
+                        attentionPriority[b.meta.attentionStatus.key as keyof typeof attentionPriority];
+                      if (attentionDiff !== 0) return attentionDiff;
+                      const dateA = a.meta.lastVisitDate ? a.meta.lastVisitDate.getTime() : 0;
+                      const dateB = b.meta.lastVisitDate ? b.meta.lastVisitDate.getTime() : 0;
+                      return dateA - dateB;
+                    });
 
-                <div className="space-y-1.5 mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                      <input
-                        type="text"
-                        placeholder="Buscar paciente..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full h-10 pl-9 pr-3 py-2 bg-slate-50/90 rounded-xl border border-transparent focus:outline-none focus:border-slate-200 focus:bg-white text-sm text-slate-700 placeholder:text-slate-400 transition-colors"
-                      />
-                    </div>
+                  // ---------- filtered + sorted card list ----------
+                  const patientCards = patients
+                    .filter(p =>
+                      (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
+                      (p.cpf && p.cpf.includes(searchTerm)) ||
+                      p.phone.includes(searchTerm)
+                    )
+                    .map(patient => ({ patient, meta: getPatientCardMeta(patient) }))
+                    .filter(({ meta }) => {
+                      if (patientListFilter === 'all') return true;
+                      if (patientListFilter === 'in-treatment') return meta.clinicalStatus === 'Em tratamento';
+                      if (patientListFilter === 'review') return meta.clinicalStatus === 'Revisão';
+                      if (patientListFilter === 'overdue') return meta.attentionStatus.key === 'overdue';
+                      return true;
+                    })
+                    .sort((a, b) => {
+                      const attentionPriority = { overdue: 0, review: 1, 'up-to-date': 2 } as const;
+                      const attentionDiff =
+                        attentionPriority[a.meta.attentionStatus.key as keyof typeof attentionPriority] -
+                        attentionPriority[b.meta.attentionStatus.key as keyof typeof attentionPriority];
+                      if (attentionDiff !== 0) return attentionDiff;
+                      const dateA = a.meta.lastVisitDate ? a.meta.lastVisitDate.getTime() : 0;
+                      const dateB = b.meta.lastVisitDate ? b.meta.lastVisitDate.getTime() : 0;
+                      return dateA - dateB;
+                    });
 
-                    <button
-                      onClick={() => setIsPatientModalOpen(true)}
-                      className="w-9 h-9 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100/80 transition-colors flex items-center justify-center shrink-0"
-                      title="Novo paciente"
-                      aria-label="Novo paciente"
-                    >
-                      <Plus size={17} />
-                    </button>
-                  </div>
-                </div>
+                  const filterChips = [
+                    { key: 'all', label: 'Todos' },
+                    { key: 'in-treatment', label: 'Em tratamento' },
+                    { key: 'review', label: 'Revisão' },
+                    { key: 'overdue', label: 'Atrasados' }
+                  ] as const;
 
-                {statusBarItems.length > 0 && (
-                  <div className="mb-2">
-                    <div className="h-8 flex items-center gap-1.5 text-xs text-slate-500 px-1 overflow-x-auto whitespace-nowrap">
-                      {statusBarItems.map((item, index) => (
-                        <React.Fragment key={item.id}>
-                          <motion.button
-                            onClick={item.onClick}
-                            className={`inline-flex items-center ${item.tone} hover:text-slate-800 transition-colors`}
-                            whileTap={{ scale: 0.98 }}
+                  const handleScheduleFromCard = (patient: Patient) => {
+                    setPatientActionsToday(prev => new Set([...prev, patient.id]));
+                    openPatientAppointmentModal(patient);
+                  };
+
+                  const handleSummaryOverdueClick = () => {
+                    setPatientListFilter('overdue');
+                    showPatientsFeedback(`${totalOverdue} ${totalOverdue === 1 ? 'paciente precisa' : 'pacientes precisam'} de follow-up.`);
+                  };
+
+                  const handleSummaryOpportunityClick = () => {
+                    const target = opportunityCandidates[0];
+                    if (!target) {
+                      showPatientsFeedback('Nenhuma oportunidade disponível agora.');
+                      return;
+                    }
+                    handleScheduleFromCard(target.patient);
+                    const firstName = (target.patient.name || '').split(' ')[0] || 'Paciente';
+                    showPatientsFeedback(`Sugestão iniciada para ${firstName}.`);
+                  };
+
+                  const handleSummaryProgressClick = () => {
+                    showPatientsFeedback(
+                      handledToday > 0
+                        ? `Excelente ritmo: ${handledToday} ${handledToday === 1 ? 'paciente atendido' : 'pacientes atendidos'} hoje.`
+                        : 'Comece por um paciente em atraso para avançar hoje.'
+                    );
+                  };
+
+                  return (
+                    <>
+                      {/* ── Header ── */}
+                      <div className="space-y-2 mb-1">
+                        <h3 className="text-[24px] font-bold tracking-tight text-[#1C1C1E]">Pacientes</h3>
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                              type="text"
+                              placeholder="Buscar paciente..."
+                              value={searchTerm}
+                              onChange={(e) => setSearchTerm(e.target.value)}
+                              className="w-full h-9 pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-300 focus:border-slate-300 transition-all text-sm"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsPatientModalOpen(true)}
+                            aria-label="Novo paciente"
+                            className="w-9 h-9 shrink-0 flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/80 transition-colors"
                           >
-                            <motion.span
-                              key={`${item.id}-${item.text}`}
-                              initial={{ opacity: 0.6, scale: 0.98 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              transition={{ duration: 0.15 }}
+                            <Plus size={18} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* ── Action-driven status bar ── */}
+                      {(() => {
+                        const items: React.ReactNode[] = [];
+
+                        // +X hoje — always visible, green + fire when >0
+                        items.push(
+                          <button
+                            key={`hoje-${handledToday}`}
+                            type="button"
+                            onClick={handleSummaryProgressClick}
+                            className={`font-semibold transition-colors ${handledToday > 0 ? 'text-emerald-600 hover:text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
+                            style={{ animation: 'statusPop 150ms ease-out' }}
+                          >
+                            {handledToday > 0 ? `🔥 ${handledToday} hoje` : '0 hoje'}
+                          </button>
+                        );
+
+                        // X oportunidades — only when >0
+                        if (freeSlotsToday > 0) {
+                          items.push(<span key="sep1" className="text-slate-300">•</span>);
+                          items.push(
+                            <button
+                              key={`oport-${freeSlotsToday}`}
+                              type="button"
+                              onClick={handleSummaryOpportunityClick}
+                              className="text-slate-500 hover:text-slate-700 transition-colors"
+                              style={{ animation: 'statusPop 150ms ease-out' }}
                             >
-                              {item.text}
-                            </motion.span>
-                          </motion.button>
-                          {index < statusBarItems.length - 1 && <span className="text-slate-300">•</span>}
-                        </React.Fragment>
-                      ))}
-                    </div>
+                              {freeSlotsToday} {freeSlotsToday === 1 ? 'oportunidade' : 'oportunidades'}
+                            </button>
+                          );
+                        }
 
-                    {todayAttendanceHint && (
-                      <motion.p
-                        initial={{ opacity: 0, y: -2 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -2 }}
-                        className="px-1 mt-0.5 text-[11px] text-slate-400"
-                      >
-                        {todayAttendanceHint}
-                      </motion.p>
-                    )}
-                  </div>
-                )}
+                        // X precisam de atenção — only when >0
+                        if (totalOverdue > 0) {
+                          items.push(<span key="sep2" className="text-slate-300">•</span>);
+                          items.push(
+                            <button
+                              key={`atencao-${totalOverdue}`}
+                              type="button"
+                              onClick={handleSummaryOverdueClick}
+                              className="text-rose-500 hover:text-rose-700 transition-colors"
+                              style={{ animation: 'statusPop 150ms ease-out' }}
+                            >
+                              {totalOverdue} {totalOverdue === 1 ? 'precisa de atenção' : 'precisam de atenção'}
+                            </button>
+                          );
+                        }
 
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {[
-                    { id: 'ALL', label: 'Todos' },
-                    { id: 'IN_TREATMENT', label: 'Em tratamento' },
-                    { id: 'REVIEW', label: 'Revisão' },
-                    { id: 'OVERDUE', label: 'Atrasados' }
-                  ].map(chip => (
-                    <button
-                      key={chip.id}
-                      onClick={() => setPatientManagementFilter(chip.id as 'ALL' | 'IN_TREATMENT' | 'REVIEW' | 'OVERDUE')}
-                      className={`px-4 py-2 rounded-full text-xs font-bold transition-all border ${
-                        patientManagementFilter === chip.id
-                          ? 'bg-primary text-white border-primary shadow-sm'
-                          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
+                        return (
+                          <div className="h-8 flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap px-0.5">
+                            {items}
+                          </div>
+                        );
+                      })()}
+
+                      {patientsInlineFeedback && (
+                        <p className="text-[11px] text-slate-400 px-0.5 -mt-1">{patientsInlineFeedback}</p>
+                      )}
+
+                      {/* ── Filter chips ── */}
+                      <div className="flex flex-wrap gap-2">
+                        {filterChips.map(chip => (
+                          <button
+                            key={chip.key}
+                            type="button"
+                            onClick={() => setPatientListFilter(chip.key)}
+                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                              patientListFilter === chip.key
+                                ? 'bg-primary text-white'
+                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {chip.label}
+                            {chip.key === 'overdue' && totalOverdue > 0 && (
+                              <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
+                                patientListFilter === 'overdue' ? 'bg-white/30 text-white' : 'bg-rose-100 text-rose-600'
+                              }`}>
+                                {totalOverdue}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* ── Card grid ── */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {patientCards.map(({ patient, meta }) => {
+                          const isOverdue = meta.attentionStatus.key === 'overdue';
+                          const isReview  = meta.attentionStatus.key === 'review';
+                          const isScheduled = meta.status === 'em_tratamento' && !!meta.nextVisitDate;
+                          const isActed   = patientActionsToday.has(patient.id);
+                          const urgencyLabel = isScheduled
+                            ? `Próxima consulta · ${meta.nextVisitLabel || 'Agendada'}`
+                            : isOverdue
+                            ? `Sem visita · ${meta.lastVisitLabel}`
+                            : isReview
+                              ? `Revisão próxima · ${meta.lastVisitLabel}`
+                              : `Em dia · ${meta.lastVisitLabel}`;
+                          return (
+                            <div
+                              key={patient.id}
+                              className={`flex items-center gap-4 bg-white rounded-2xl border px-4 py-3.5 hover:shadow-sm transition-all ${
+                                isOverdue ? 'border-rose-100' : 'border-slate-100 hover:border-slate-200'
+                              }`}
+                            >
+                              {/* Avatar */}
+                              <button
+                                type="button"
+                                onClick={() => openPatientRecord(patient.id)}
+                                className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold text-sm overflow-hidden border border-primary/20 shrink-0"
+                              >
+                                {patient.photo_url ? (
+                                  <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  (patient.name || '?').charAt(0)
+                                )}
+                              </button>
+
+                              {/* Info */}
+                              <button
+                                type="button"
+                                onClick={() => openPatientRecord(patient.id)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <p className="text-[15px] font-semibold text-slate-900 truncate leading-tight">{patient.name}</p>
+                                <p className={`text-xs mt-0.5 truncate ${
+                                  isScheduled ? 'text-sky-600' : isOverdue ? 'text-rose-500' : isReview ? 'text-amber-500' : 'text-slate-400'
+                                }`}>
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${meta.attentionStatus.dot}`} />
+                                  {urgencyLabel}
+                                </p>
+                              </button>
+
+                              {/* Icon actions */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  title={isActed ? 'Agendamento iniciado' : 'Agendar consulta'}
+                                  onClick={() => handleScheduleFromCard(patient)}
+                                  className={`w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
+                                    isActed
+                                      ? 'text-emerald-600 bg-emerald-50'
+                                      : 'text-slate-400 hover:text-primary hover:bg-primary/8'
+                                  }`}
+                                >
+                                  {isActed ? <Check size={16} /> : <Calendar size={16} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Contatar via WhatsApp"
+                                  onClick={() => contactPatientOnWhatsApp(patient)}
+                                  className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                                >
+                                  <MessageCircle size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {patientCards.length === 0 && (
+                          <div className="col-span-full bg-white rounded-2xl border border-slate-100 shadow-sm p-10 text-center">
+                            <Users size={36} className="mx-auto text-slate-200 mb-3" />
+                            <p className="text-slate-600 font-medium">Nenhum paciente encontrado para este filtro.</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {activeTab === 'prontuario' && selectedPatient && (
+              <div className="space-y-8 pt-10">
+                <div className="space-y-1.5 mb-6">
+                  <h3 className="text-[28px] font-bold tracking-tight text-[#1C1C1E] truncate">Prontuário: {selectedPatient.name}</h3>
+                  <p className="text-[17px] font-medium text-[#8E8E93]">Linha clínica e decisões do paciente</p>
                 </div>
 
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  <div className="p-3 sm:p-4 space-y-2">
-                    {patientCardsData.map(({ patient, meta }) => {
-                      const statusConfig =
-                        meta.priorityStatus === 'EM_TRATAMENTO'
-                          ? { dot: 'bg-primary', badge: 'bg-primary/8 text-primary', label: 'Em tratamento', avatarBg: 'bg-primary/10 text-primary' }
-                          : meta.priorityStatus === 'ATRASADO'
-                            ? { dot: 'bg-rose-500', badge: 'bg-rose-50 text-rose-600', label: 'Atrasado', avatarBg: 'bg-rose-50 text-rose-500' }
-                            : meta.priorityStatus === 'REVISAO'
-                              ? { dot: 'bg-amber-500', badge: 'bg-amber-50 text-amber-600', label: 'Revisão', avatarBg: 'bg-amber-50 text-amber-600' }
-                              : { dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-600', label: 'Em dia', avatarBg: 'bg-emerald-50 text-emerald-600' };
+                <div className="flex items-center gap-3 md:gap-4">
+                  <button 
+                    onClick={() => setActiveTab('pacientes')}
+                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                  >
+                    <ChevronRight size={20} className="rotate-180 md:hidden" />
+                    <ChevronRight size={24} className="rotate-180 hidden md:block" />
+                  </button>
+                  <span className="text-sm font-medium text-slate-500">Voltar para pacientes</span>
+                </div>
 
-                      const initials = patient.name.trim().split(' ').filter(Boolean).slice(0, 2).map((n: string) => n[0].toUpperCase()).join('');
+                {(() => {
+                  const meta = getPatientCardMeta(selectedPatient);
+                  const pendingProceduresCount = (selectedPatient.treatmentPlan || []).filter(
+                    plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO'
+                  ).length;
 
-                      return (
-                        <div
-                          key={patient.id}
-                          onClick={() => openPatientRecord(patient.id)}
-                          className="group cursor-pointer rounded-2xl border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 hover:shadow-sm transition-all"
+                  return (
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 md:gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Status clínico</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.clinicalStatus}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Próxima consulta</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.nextVisitLabel || 'Sem consulta agendada'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Procedimentos pendentes</p>
+                          <p className="text-sm font-semibold text-slate-700 mt-1">{pendingProceduresCount}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
+                  <div className="flex flex-col sm:flex-row gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatientTab('evolucao');
+                        setIsEvolutionFormOpen(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition-colors w-full sm:w-auto"
+                    >
+                      Nova evolução
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowTreatmentPlanSummary(true)}
+                      className="px-4 py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors w-full sm:w-auto"
+                    >
+                      Ver plano de tratamento
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Sidebar: Patient Info & Anamnesis */}
+                  <div className="space-y-4 flex flex-col order-2 lg:order-2">
+                    <div className="order-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
+                      <div className="flex flex-col items-center mb-6">
+                        <div className="relative group">
+                          <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-primary transition-all">
+                            {selectedPatient.photo_url ? (
+                              <img 
+                                src={selectedPatient.photo_url} 
+                                alt={selectedPatient.name} 
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <UserCircle size={48} />
+                            )}
+                          </div>
+                          <label className="absolute -bottom-2 -right-2 p-2 bg-primary text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-all">
+                            <Camera size={16} />
+                            <input 
+                              type="file" 
+                              className="hidden" 
+                              accept="image/*"
+                              onChange={handlePatientPhotoUpload}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <UserCircle size={18} className="text-primary" />
+                        Dados Pessoais
+                      </h4>
+                      <div className="space-y-3 text-sm">
+                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">CPF</span> {selectedPatient.cpf || '---'}</p>
+                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Nascimento</span> {formatDate(selectedPatient.birth_date) || '---'}</p>
+                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Telefone</span> {selectedPatient.phone}</p>
+                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">E-mail</span> {selectedPatient.email}</p>
+                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Endereço</span> {selectedPatient.address || '---'}</p>
+                      </div>
+                    </div>
+
+                    <div className="order-1 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                          <AlertCircle size={18} className="text-rose-500" />
+                          Anamnese
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setIsAnamnesisEditing(prev => !prev)}
+                          className="text-[11px] font-semibold text-primary hover:underline"
                         >
-                          <div className="flex items-center gap-3">
-                            {/* Avatar minimalista */}
-                            <div className={`w-9 h-9 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${patient.photo_url ? 'bg-slate-100' : statusConfig.avatarBg}`}>
-                              {patient.photo_url ? (
-                                <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          {isAnamnesisEditing ? 'Fechar edição' : 'Editar'}
+                        </button>
+                      </div>
+
+                      {!isAnamnesisEditing && (
+                        <ul className="space-y-2 text-sm text-slate-700">
+                          <li className="leading-relaxed"><span className="text-slate-400">• Histórico:</span> {selectedPatient.anamnesis?.medical_history || 'Sem registros relevantes'}</li>
+                          <li className="leading-relaxed"><span className="text-slate-400">• Alergias:</span> {selectedPatient.anamnesis?.allergies || 'Nenhuma alergia registrada'}</li>
+                          <li className="leading-relaxed"><span className="text-slate-400">• Medicações:</span> {selectedPatient.anamnesis?.medications || 'Sem medicação em uso registrada'}</li>
+                        </ul>
+                      )}
+
+                      {isAnamnesisEditing && (
+                        <form onSubmit={saveAnamnesis} className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={3}
+                              value={selectedPatient.anamnesis?.medical_history || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  allergies: '', 
+                                  medications: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  medical_history: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={2}
+                              value={selectedPatient.anamnesis?.allergies || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  medical_history: '', 
+                                  medications: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  allergies: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
+                            <textarea 
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                              rows={2}
+                              value={selectedPatient.anamnesis?.medications || ''}
+                              onChange={(e) => setSelectedPatient({
+                                ...selectedPatient, 
+                                anamnesis: { 
+                                  medical_history: '', 
+                                  allergies: '', 
+                                  ...selectedPatient.anamnesis, 
+                                  medications: e.target.value 
+                                }
+                              })}
+                            />
+                          </div>
+                          <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">
+                            Salvar Anamnese
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Main: Evolution & Odontogram Placeholder */}
+                  <div className="lg:col-span-2 space-y-8 order-1 lg:order-1">
+                    {/* Tabs for Patient Record */}
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="flex border-b border-slate-100">
+                        {['evolucao', 'imagens', 'financeiro'].map((tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setSelectedPatientTab(tab as any)}
+                            className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
+                              selectedPatientTab === tab 
+                                ? 'border-primary text-primary bg-primary/5' 
+                                : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            {tab === 'evolucao' ? 'Evolução Clínica' : tab === 'imagens' ? 'Imagens & RX' : 'Financeiro'}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="p-6">
+                        {selectedPatientTab === 'evolucao' ? (
+                          <>
+                            <div className="flex justify-between items-center mb-6">
+                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                <ClipboardList size={18} className="text-primary" />
+                                Histórico de Evolução
+                              </h4>
+                              <button 
+                                onClick={() => setIsEvolutionFormOpen(!isEvolutionFormOpen)}
+                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
+                              >
+                                <Plus size={14} className={isEvolutionFormOpen ? 'rotate-45' : ''} /> 
+                                {isEvolutionFormOpen ? 'Cancelar' : 'Nova Evolução'}
+                              </button>
+                            </div>
+
+                            <AnimatePresence>
+                              {isEvolutionFormOpen && (
+                                <motion.div 
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="overflow-hidden mb-6"
+                                >
+                                  <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Procedimento</label>
+                                        <input 
+                                          type="text"
+                                          placeholder="Ex: Limpeza, Restauração..."
+                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                                          value={newEvolution.procedure}
+                                          onChange={(e) => setNewEvolution({...newEvolution, procedure: e.target.value})}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Notas</label>
+                                        <textarea 
+                                          placeholder="Descreva a evolução do paciente..."
+                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                                          rows={2}
+                                          value={newEvolution.notes || ''}
+                                          onChange={(e) => setNewEvolution({...newEvolution, notes: e.target.value})}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-end gap-2">
+                                      <button 
+                                        onClick={() => setIsEvolutionFormOpen(false)}
+                                        className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
+                                      >
+                                        Cancelar
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          if (newEvolution.notes || newEvolution.procedure) {
+                                            addEvolution({ notes: newEvolution.notes, procedure: newEvolution.procedure });
+                                            setNewEvolution({ notes: '', procedure: '' });
+                                            setIsEvolutionFormOpen(false);
+                                          } else {
+                                            alert('Preencha pelo menos um campo (Procedimento ou Notas).');
+                                          }
+                                        }}
+                                        className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors"
+                                      >
+                                        Adicionar Registro
+                                      </button>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+
+                            <div className="space-y-5">
+                              {(() => {
+                                const evolutionEntries = [...(selectedPatient.evolution || [])]
+                                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                                if (evolutionEntries.length === 0) {
+                                  return (
+                                    <div className="text-center py-12 text-slate-400">
+                                      <ClipboardList size={48} className="mx-auto mb-4 opacity-20" />
+                                      <p>Nenhum registro de evolução clínica.</p>
+                                    </div>
+                                  );
+                                }
+
+                                const groups = evolutionEntries.reduce((acc, evo) => {
+                                  const key = getRelativeDayLabel(evo.date);
+                                  if (!acc[key]) acc[key] = [];
+                                  acc[key].push(evo);
+                                  return acc;
+                                }, {} as Record<string, typeof evolutionEntries>);
+
+                                return Object.entries(groups).map(([groupLabel, entries]) => (
+                                  <div key={groupLabel} className="space-y-2">
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">{groupLabel}</p>
+                                    <div className="space-y-2">
+                                      {entries.map(evo => (
+                                        <div key={evo.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                          <div className="flex justify-between items-start gap-2 mb-1.5">
+                                            <span className="text-[10px] text-slate-400 font-semibold uppercase">{formatDate(evo.date)}</span>
+                                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                                              {evo.procedure_performed || 'Registro'}
+                                            </span>
+                                          </div>
+                                          <p className="text-sm text-slate-700 leading-relaxed">{evo.notes || 'Sem observações'}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ));
+                              })()}
+                            </div>
+                          </>
+                        ) : selectedPatientTab === 'imagens' ? (
+                          <div className="space-y-6">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                <ImageIcon size={18} className="text-primary" />
+                                Imagens e Exames (RX)
+                              </h4>
+                              <button 
+                                onClick={() => setIsImageModalOpen(true)}
+                                className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors flex items-center gap-2"
+                              >
+                                <Upload size={14} />
+                                Upload
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                              {selectedPatient.files && selectedPatient.files.length > 0 ? (
+                                selectedPatient.files.map((file) => (
+                                  <div key={file.id} className="group relative bg-slate-50 rounded-xl border border-slate-100 overflow-hidden aspect-square">
+                                    <img 
+                                      src={file.file_url} 
+                                      alt={file.description} 
+                                      className="w-full h-full object-cover"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-4 text-center">
+                                      <p className="text-white text-xs font-bold mb-2">{file.description}</p>
+                                      <div className="flex gap-2">
+                                        <button 
+                                          onClick={() => window.open(file.file_url, '_blank')}
+                                          className="p-2 bg-white/20 hover:bg-white/40 rounded-lg text-white transition-colors"
+                                        >
+                                          <Search size={14} />
+                                        </button>
+                                        <button 
+                                          onClick={() => deleteFile(file.id)}
+                                          className="p-2 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white transition-colors"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))
                               ) : (
-                                <span className="text-[12px] font-semibold tracking-tight">{initials}</span>
+                                <div className="col-span-full py-12 text-center text-slate-400">
+                                  <ImageIcon size={48} className="mx-auto mb-4 opacity-20" />
+                                  <p>Nenhuma imagem ou exame anexado.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-8">
+                            <div className="flex justify-between items-center">
+                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                <DollarSign size={18} className="text-primary" />
+                                Histórico Financeiro do Paciente
+                              </h4>
+                              <button 
+                                onClick={() => {
+                                  setNewPaymentPlan({...newPaymentPlan, patient_id: selectedPatient.id.toString()});
+                                  setIsPaymentPlanModalOpen(true);
+                                }}
+                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
+                              >
+                                <Plus size={14} /> 
+                                Novo Plano de Pagamento
+                              </button>
+                            </div>
+
+                            {/* Payment Plans */}
+                            <div className="space-y-4">
+                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Planos de Pagamento</h5>
+                              {selectedPatient.financial?.paymentPlans && selectedPatient.financial.paymentPlans.length > 0 ? (
+                                selectedPatient.financial.paymentPlans.map(plan => {
+                                  const planInstallments = selectedPatient.financial?.installments.filter(i => i.payment_plan_id === plan.id) || [];
+                                  const hasOverdue = planInstallments.some(i => i.status === 'PENDING' && isOverdue(i.due_date));
+                                  
+                                  return (
+                                    <div key={plan.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                                      <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                          <p className="font-bold text-slate-800">{plan.procedure}</p>
+                                          <p className="text-xs text-slate-500">
+                                            Total: {Number(plan.total_amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} • {plan.installments_count} parcelas
+                                          </p>
+                                        </div>
+                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                          plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 
+                                          plan.status === 'CANCELLED' ? 'bg-slate-200 text-slate-600' : 
+                                          hasOverdue ? 'bg-rose-100 text-rose-700' :
+                                          'bg-blue-100 text-blue-700'
+                                        }`}>
+                                          {plan.status === 'COMPLETED' ? 'Concluído' : 
+                                           plan.status === 'CANCELLED' ? 'Cancelado' : 
+                                           hasOverdue ? 'Atrasado' : 'Em Aberto'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="space-y-2">
+                                        {planInstallments.map(inst => (
+                                          <div key={inst.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-100 text-sm">
+                                            <div className="flex items-center gap-3">
+                                              <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center text-[10px] font-bold">
+                                                {inst.number}
+                                              </span>
+                                              <div>
+                                                <p className="font-medium text-slate-700">{Number(inst.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+                                                <p className="text-[10px] text-slate-400 font-bold uppercase">Vencimento: {formatDate(inst.due_date)}</p>
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                inst.status === 'PAID' ? 'bg-primary/10 text-primary' : 
+                                                isOverdue(inst.due_date) ? 'bg-rose-100 text-rose-700' : 
+                                                'bg-amber-100 text-amber-700'
+                                              }`}>
+                                                {inst.status === 'PAID' ? 'Pago' : isOverdue(inst.due_date) ? 'Atrasado' : 'Pendente'}
+                                              </span>
+                                              {inst.status === 'PENDING' && (
+                                                <button 
+                                                  onClick={() => handlePayInstallment(inst.id, 'Dinheiro')}
+                                                  className="text-[10px] font-bold text-primary hover:underline"
+                                                >
+                                                  Pagar
+                                                </button>
+                                              )}
+                                              {inst.status === 'PAID' && inst.transaction_id && (
+                                                <button 
+                                                  onClick={() => {
+                                                    const trans = selectedPatient.financial?.transactions.find(t => t.id === inst.transaction_id);
+                                                    if (trans) generateReceipt(trans);
+                                                  }}
+                                                  className="text-[10px] font-bold text-blue-600 hover:underline"
+                                                >
+                                                  Recibo
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="py-8 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                                  <DollarSign size={32} className="mx-auto mb-2 opacity-20" />
+                                  <p className="text-sm">Nenhum plano de parcelamento ativo.</p>
+                                </div>
                               )}
                             </div>
 
-                            {/* Info */}
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-[15px] font-semibold text-slate-900 truncate">{patient.name}</p>
-                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${statusConfig.badge}`}>
-                                  {statusConfig.label}
-                                </span>
+                            {/* Recent Transactions */}
+                            <div className="space-y-4">
+                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pagamentos Recentes</h5>
+                              <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden overflow-x-auto">
+                                <table className="w-full text-left text-sm min-w-[500px]">
+                                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-400 uppercase">
+                                    <tr>
+                                      <th className="px-4 py-3">Data</th>
+                                      <th className="px-4 py-3">Descrição</th>
+                                      <th className="px-4 py-3 text-right">Valor</th>
+                                      <th className="px-4 py-3"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {selectedPatient.financial?.transactions.map(t => (
+                                      <tr key={t.id} className="hover:bg-slate-50">
+                                        <td className="px-4 py-3 text-slate-500">{formatDate(t.date)}</td>
+                                        <td className="px-4 py-3 font-medium text-slate-700">{t.description}</td>
+                                        <td className={`px-4 py-3 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
+                                          {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                          <button 
+                                            onClick={() => generateReceipt(t)}
+                                            className="p-1.5 text-slate-400 hover:text-primary transition-colors"
+                                            title="Gerar Recibo"
+                                          >
+                                            <FileText size={16} />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {(!selectedPatient.financial?.transactions || selectedPatient.financial.transactions.length === 0) && (
+                                      <tr>
+                                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400">Nenhuma transação registrada.</td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
                               </div>
-                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">
-                                <span className={`inline-block w-1.5 h-1.5 rounded-full align-middle mr-1 ${statusConfig.dot}`} />
-                                {meta.timeSinceLastVisit}
-                              </p>
-                            </div>
-
-                            {/* Ações */}
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openAppointmentModalForPatient(patient);
-                                }}
-                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-primary/10 hover:text-primary transition-colors flex items-center justify-center"
-                                aria-label="Agendar consulta"
-                                title="Agendar consulta"
-                              >
-                                <Calendar size={14} />
-                              </button>
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const whatsappUrl = getWhatsappUrl(patient.phone);
-                                  if (whatsappUrl) {
-                                    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-                                  }
-                                }}
-                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 transition-colors flex items-center justify-center"
-                                aria-label="Contato via WhatsApp"
-                                title="Contato via WhatsApp"
-                              >
-                                <MessageCircle size={14} />
-                              </button>
-
-                              <ChevronRight size={13} className="text-slate-300 group-hover:text-slate-400 transition-colors ml-0.5" />
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-
-                    {patientCardsData.length === 0 && (
-                      <div className="p-10 text-center text-slate-500">
-                        Nenhum paciente encontrado com os filtros atuais.
+                        )}
                       </div>
-                    )}
+                    </div>
+
+                    {/* Odontogram */}
+                    <div className="bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
+                        <div>
+                          <h4 className="text-xl font-bold text-slate-800">Odontograma Interativo</h4>
+                          <p className="text-sm text-slate-500 mt-1">
+                            {Object.values(selectedPatient.odontogram || {}).filter((tooth: any) => {
+                              const status = (tooth?.status || '').toLowerCase();
+                              return !!status && !['normal', 'saudavel', 'saudável', 'healthy'].includes(status);
+                            }).length} dentes com problemas
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <button
+                            type="button"
+                            onClick={() => setShowTreatmentPlanSummary(prev => !prev)}
+                            className="px-3 py-2 rounded-xl text-xs font-semibold text-primary border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors w-full sm:w-auto"
+                          >
+                            Ver plano de tratamento
+                          </button>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:inline">Clique no dente</span>
+                        </div>
+                      </div>
+
+                      {showTreatmentPlanSummary && (
+                        <div className="mb-5 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                          {(selectedPatient.treatmentPlan || []).filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO').length > 0 ? (
+                            <ul className="space-y-1.5 text-sm text-slate-700">
+                              {(selectedPatient.treatmentPlan || [])
+                                .filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO')
+                                .slice(0, 5)
+                                .map(plan => (
+                                  <li key={plan.id} className="leading-relaxed">• {plan.procedure} {plan.tooth_number ? `(dente ${plan.tooth_number})` : ''}</li>
+                                ))}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-slate-500">Nenhum procedimento pendente no plano de tratamento.</p>
+                          )}
+                        </div>
+                      )}
+
+                      <Odontogram 
+                        data={selectedPatient.odontogram || {}} 
+                        history={selectedPatient.toothHistory || []}
+                        onChange={saveOdontogram} 
+                        onAddHistory={addToothHistory}
+                      />
+                    </div>
                   </div>
                 </div>
-            </div>
-          )}
-
-            {activeTab === 'prontuario' && selectedPatient && (
-              <PatientClinical
-                patient={selectedPatient}
-                appointments={appointments}
-                onUpdatePatient={async (updated: any) => {
-                  setSelectedPatient(updated);
-                  await handleUpdatePatient(updated);
-                }}
-                onAddEvolution={async (data: any) => {
-                  const updated = {
-                    ...selectedPatient,
-                    evolution: [data, ...(selectedPatient.evolution || [])],
-                  };
-                  setSelectedPatient(updated);
-                  await addEvolution(data);
-                }}
-                setAppActiveTab={setActiveTab}
-                navigate={navigate}
-              />
+              </div>
             )}
-
             {activeTab === 'financeiro' && (
               <div className="space-y-6">
                 <div className="mb-8">
@@ -4598,60 +5527,69 @@ export default function App() {
       {/* Modal de Exportação */}
       <AnimatePresence>
         {isExportModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsExportModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ scale: 0.96, opacity: 0, y: 24 }}
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Exportar Dados</h3>
-                  <button onClick={() => setIsExportModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
-                  </button>
-                </div>
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <Download className="text-primary" size={24} />
+                  Exportar Dados
+                </h3>
+                <button onClick={() => setIsExportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <Plus size={24} className="rotate-45" />
+                </button>
+              </div>
+              
+              <div className="p-6 space-y-6">
+                <p className="text-sm text-slate-500">
+                  Selecione os filtros para exportar os dados em formato Excel (.xlsx).
+                </p>
 
-                <div className="space-y-3.5">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">De</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">
+                        {exportType === 'patients' ? 'Cadastrados desde' : 'Data Inicial'}
+                      </label>
                       <input 
                         type="date" 
                         value={exportFilters.startDate}
                         onChange={(e) => setExportFilters({...exportFilters, startDate: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block\">Ate</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">
+                        {exportType === 'patients' ? 'Cadastrados até' : 'Data Final'}
+                      </label>
                       <input 
                         type="date" 
                         value={exportFilters.endDate}
                         onChange={(e) => setExportFilters({...exportFilters, endDate: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block\">Paciente</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Paciente</label>
                     <select 
                       value={exportFilters.patientId}
                       onChange={(e) => setExportFilters({...exportFilters, patientId: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     >
-                      <option value="all">Todos</option>
+                      <option value="all">Todos os Pacientes</option>
                       {patients.map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
@@ -4660,33 +5598,34 @@ export default function App() {
 
                   {exportType === 'finance' && (
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block\">Tipo</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Tipo de Transação</label>
                       <select 
                         value={exportFilters.category}
                         onChange={(e) => setExportFilters({...exportFilters, category: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
-                        <option value="all\">Receitas + Despesas</option>
-                        <option value="income\">Receitas</option>
-                        <option value="expense\">Despesas</option>
+                        <option value="all">Receitas + Despesas</option>
+                        <option value="income">Apenas Receitas</option>
+                        <option value="expense">Apenas Despesas</option>
                       </select>
                     </div>
                   )}
+                </div>
 
-                  <div className="flex gap-3 pt-1.5">
-                    <button 
-                      onClick={() => setIsExportModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
-                    >
-                      Cancelar
-                    </button>
-                    <button 
-                      onClick={exportType === 'patients' ? exportPatients : exportFinance}
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
-                    >
-                      Exportar
-                    </button>
-                  </div>
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    onClick={() => setIsExportModalOpen(false)}
+                    className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={exportType === 'patients' ? exportPatients : exportFinance}
+                    className="flex-1 bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Download size={20} />
+                    Exportar Agora
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -4697,117 +5636,53 @@ export default function App() {
       {/* Modal de Novo Agendamento */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
-            <motion.div
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => {
                 setIsModalOpen(false);
                 setSuggestedSlot(null);
-                setEditingAppointment(null);
               }}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 24 }}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <div className="space-y-1.5">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-white/85 border border-slate-200/70 px-2.5 py-1">
-                      <Clock size={14} className="text-primary" />
-                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Agenda</span>
-                    </div>
-                    <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">{editingAppointment ? 'Editar Agendamento' : 'Novo Agendamento'}</h3>
-                  </div>
+              <div className="p-4 md:p-6">
+                <div className="flex justify-between items-center mb-4 md:mb-6">
+                  <h3 className="text-lg md:text-xl font-bold text-slate-900">Novo Agendamento</h3>
                   <button onClick={() => {
                     setIsModalOpen(false);
                     setSuggestedSlot(null);
-                    setEditingAppointment(null);
-                  }} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+                  }} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
                 {suggestedSlot && (
-                  <div className="mb-4 rounded-2xl border border-[#BFDBFE] bg-[linear-gradient(180deg,#EFF6FF,#DBEAFE)] px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
-                    <p className="text-[10px] font-bold text-[#1D4ED8] uppercase tracking-[0.12em] mb-1">Melhor horario</p>
-                    <p className="text-[13px] text-[#1E3A8A] leading-relaxed">
-                      Horario: <span className="font-bold">{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span> •
-                      {' '}Duracao: <span className="font-bold">{Math.floor(suggestedSlot.duration)}min</span> •
-                      {' '}Procedimento: <span className="font-bold">{suggestedSlot.procedure}</span>
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs font-bold text-blue-700 uppercase mb-1">💡 Sugestão do Sistema</p>
+                    <p className="text-sm text-blue-900">
+                      Horário: <span className="font-bold">{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span> • 
+                      Duração: <span className="font-bold">{Math.floor(suggestedSlot.duration)}min</span> • 
+                      Procedimento: <span className="font-bold">{suggestedSlot.procedure}</span>
                     </p>
                   </div>
                 )}
 
-                <form onSubmit={handleCreateAppointment} className="space-y-3.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Horario</label>
-                      <input
-                        required
-                        type="time"
-                        value={newAppointment.time}
-                        onChange={(e) => setNewAppointment({...newAppointment, time: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Data</label>
-                      <input
-                        required
-                        type="date"
-                        value={newAppointment.date}
-                        onChange={(e) => setNewAppointment({...newAppointment, date: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                      />
-                    </div>
-                  </div>
-
+                <form onSubmit={handleCreateAppointment} className="space-y-4">
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] block">Duracao</label>
-                      <div className="flex gap-1.5">
-                        {[30, 45, 60].map((min) => (
-                          <button
-                            key={min}
-                            type="button"
-                            onClick={() => setNewAppointment({...newAppointment, duration: min.toString()})}
-                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold transition-all ${
-                              newAppointment.duration === min.toString()
-                                ? 'bg-primary text-white'
-                                : 'border border-slate-200 text-slate-600 hover:border-primary/30'
-                            }`}
-                          >
-                            {min}min
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <input
-                      required
-                      type="number"
-                      min="1"
-                      value={newAppointment.duration}
-                      onChange={(e) => setNewAppointment({...newAppointment, duration: e.target.value})}
-                      placeholder="Ex: 30"
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Paciente</label>
-                    <select
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Paciente</label>
+                    <select 
                       required
                       value={newAppointment.patient_id}
                       onChange={(e) => setNewAppointment({...newAppointment, patient_id: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     >
                       <option value="">Selecione um paciente</option>
                       {patients.map(p => (
@@ -4816,35 +5691,71 @@ export default function App() {
                     </select>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Data</label>
+                      <input 
+                        required
+                        type="date" 
+                        value={newAppointment.date}
+                        onChange={(e) => setNewAppointment({...newAppointment, date: e.target.value})}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Horário</label>
+                      <input 
+                        required
+                        type="time" 
+                        value={newAppointment.time}
+                        onChange={(e) => setNewAppointment({...newAppointment, time: e.target.value})}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                      />
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Procedimento</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Duração (minutos)</label>
+                    <input 
+                      required
+                      type="number" 
+                      min="1"
+                      value={newAppointment.duration}
+                      onChange={(e) => setNewAppointment({...newAppointment, duration: e.target.value})}
+                      placeholder="Ex: 30, 45, 60"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Procedimento</label>
                     <input
                       type="text"
                       value={newAppointment.notes || ''}
                       onChange={(e) => setNewAppointment({...newAppointment, notes: e.target.value})}
-                      placeholder="Ex: endo 11"
+                      placeholder="Ex: endo 11, canal 11, restauração 26"
                       maxLength={80}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     />
+                    <p className="mt-0.5 text-xs text-slate-400">Foque em um procedimento curto (ex: endo 11).</p>
                   </div>
 
-                  <div className="flex gap-3 pt-1.5">
-                    <button
+                  <div className="flex gap-3 pt-2">
+                    <button 
                       type="button"
                       onClick={() => {
                         setIsModalOpen(false);
                         setSuggestedSlot(null);
-                        setEditingAppointment(null);
                       }}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50 transition-all text-sm"
                     >
                       Cancelar
                     </button>
-                    <button
+                    <button 
                       type="submit"
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
+                      className="flex-1 px-4 py-2.5 bg-primary text-white font-bold rounded-lg shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 text-sm"
                     >
-                      {editingAppointment ? 'Salvar' : 'Criar'}
+                      Confirmar
                     </button>
                   </div>
                 </form>
@@ -4856,108 +5767,106 @@ export default function App() {
       {/* Modal de Novo Paciente */}
       <AnimatePresence>
         {isPatientModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsPatientModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ opacity: 0, scale: 0.96, y: 24 }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Novo Paciente</h3>
-                  <button onClick={() => setIsPatientModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+              <div className="p-6 md:p-8">
+                <div className="flex justify-between items-center mb-6 md:mb-8">
+                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Cadastrar Paciente</h3>
+                  <button onClick={() => setIsPatientModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleCreatePatient} className="space-y-3.5">
+                <form onSubmit={handleCreatePatient} className="space-y-4">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Nome</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nome Completo</label>
                     <input 
                       required
                       type="text" 
                       value={newPatient.name}
                       onChange={(e) => setNewPatient({...newPatient, name: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">CPF</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">CPF</label>
                       <input 
                         type="text" 
                         value={newPatient.cpf}
                         onChange={(e) => setNewPatient({...newPatient, cpf: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Nasc.</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nascimento</label>
                       <input 
                         type="date" 
                         value={newPatient.birth_date}
                         onChange={(e) => setNewPatient({...newPatient, birth_date: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Telefone</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Telefone</label>
                       <input 
                         required
                         type="text" 
                         value={newPatient.phone}
                         onChange={(e) => setNewPatient({...newPatient, phone: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">E-mail</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">E-mail</label>
                       <input 
                         type="email" 
                         value={newPatient.email}
                         onChange={(e) => setNewPatient({...newPatient, email: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Endereço</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Endereço</label>
                     <input 
                       type="text" 
                       value={newPatient.address}
                       onChange={(e) => setNewPatient({...newPatient, address: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
-                  <div className="flex gap-3 pt-1.5">
+                  <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsPatientModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
-                      Criar
+                      Cadastrar Paciente
                     </button>
                   </div>
                 </form>
@@ -4970,62 +5879,60 @@ export default function App() {
       {/* Modal de Editar Dentista */}
       <AnimatePresence>
         {isEditDentistModalOpen && editingDentist && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsEditDentistModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ opacity: 0, scale: 0.96, y: 24 }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Editar Dentista</h3>
-                  <button onClick={() => setIsEditDentistModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+              <div className="p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-2xl font-bold text-slate-900">Editar Dentista</h3>
+                  <button onClick={() => setIsEditDentistModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleUpdateDentist} className="space-y-3.5">
+                <form onSubmit={handleUpdateDentist} className="space-y-4">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Nome</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nome Completo</label>
                     <input 
                       required
                       type="text" 
                       value={editingDentist.name}
                       onChange={(e) => setEditingDentist({...editingDentist, name: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">E-mail</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">E-mail</label>
                     <input 
                       required
                       type="email" 
                       value={editingDentist.email}
                       onChange={(e) => setEditingDentist({...editingDentist, email: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
-                  <div className="flex gap-3 pt-1.5">
+                  <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsEditDentistModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Salvar
                     </button>
@@ -5040,46 +5947,68 @@ export default function App() {
       {/* Modal de Plano de Parcelamento */}
       <AnimatePresence>
         {isPaymentPlanModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsPaymentPlanModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ scale: 0.96, opacity: 0, y: 24 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Novo Plano</h3>
-                  <button onClick={() => setIsPaymentPlanModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+              <div className="p-6 md:p-8">
+                <div className="flex justify-between items-center mb-6 md:mb-8">
+                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Novo Plano de Pagamento</h3>
+                  <button onClick={() => setIsPaymentPlanModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleCreatePaymentPlan} className="space-y-3.5">
+                <form onSubmit={handleCreatePaymentPlan} className="space-y-4">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Procedimento</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Paciente</label>
+                    {selectedPatient ? (
+                      <input 
+                        readOnly
+                        type="text"
+                        value={selectedPatient.name}
+                        className="w-full p-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
+                      />
+                    ) : (
+                      <select 
+                        required
+                        value={newPaymentPlan.patient_id}
+                        onChange={(e) => setNewPaymentPlan({...newPaymentPlan, patient_id: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      >
+                        <option value="">Selecione um paciente</option>
+                        {patients.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Procedimento / Tratamento</label>
                     <input 
                       required
                       type="text" 
-                      placeholder="Ex: Canal, Implante..."
+                      placeholder="Ex: Tratamento de Canal, Implante..."
                       value={newPaymentPlan.procedure}
                       onChange={(e) => setNewPaymentPlan({...newPaymentPlan, procedure: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Total (R$)</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Valor Total (R$)</label>
                       <input 
                         required
                         type="number" 
@@ -5087,16 +6016,16 @@ export default function App() {
                         placeholder="0,00"
                         value={newPaymentPlan.total_amount}
                         onChange={(e) => setNewPaymentPlan({...newPaymentPlan, total_amount: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Parcelas</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nº de Parcelas</label>
                       <select 
                         required
                         value={newPaymentPlan.installments_count}
                         onChange={(e) => setNewPaymentPlan({...newPaymentPlan, installments_count: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         {[1, 2, 3, 4, 5, 6, 10, 12, 18, 24].map(n => (
                           <option key={n} value={n}>{n}x</option>
@@ -5106,29 +6035,29 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Primeiro Vencimento</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Data do Primeiro Vencimento</label>
                     <input 
                       required
                       type="date" 
                       value={newPaymentPlan.first_due_date}
                       onChange={(e) => setNewPaymentPlan({...newPaymentPlan, first_due_date: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
-                  <div className="flex gap-3 pt-2">
+                  <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsPaymentPlanModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
-                      Criar
+                      Criar Plano
                     </button>
                   </div>
                 </form>
@@ -5217,77 +6146,72 @@ export default function App() {
       {/* Modal de Novo Dentista */}
       <AnimatePresence>
         {isDentistModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsDentistModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ scale: 0.96, opacity: 0, y: 24 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Novo Dentista</h3>
-                  <button onClick={() => setIsDentistModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+              <div className="p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-2xl font-bold text-slate-900">Novo Dentista</h3>
+                  <button onClick={() => setIsDentistModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleCreateDentist} className="space-y-3.5">
+                <form onSubmit={handleCreateDentist} className="space-y-4">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Nome</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nome Completo</label>
                     <input 
                       required
                       type="text" 
-                      placeholder="Ex: Dr. Silva"
                       value={newDentist.name}
                       onChange={(e) => setNewDentist({...newDentist, name: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">E-mail</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">E-mail</label>
                     <input 
                       required
                       type="email" 
-                      placeholder="contato@example.com"
                       value={newDentist.email}
                       onChange={(e) => setNewDentist({...newDentist, email: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Senha</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Senha</label>
                     <input 
                       required
                       type="password" 
-                      placeholder="••••••••"
                       value={newDentist.password}
                       onChange={(e) => setNewDentist({...newDentist, password: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
-                  <div className="flex gap-3 pt-2">
+                  <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsDentistModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
-                      Criar
+                      Cadastrar
                     </button>
                   </div>
                 </form>
@@ -5391,63 +6315,52 @@ export default function App() {
       {/* Modal de Transação Financeira */}
       <AnimatePresence>
         {isTransactionModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsTransactionModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ scale: 0.96, opacity: 0, y: 24 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">
-                    {transactionType === 'INCOME' ? 'Receita' : 'Despesa'}
-                  </h3>
-                  <button onClick={() => setIsTransactionModalOpen(false)} className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0">
-                    <Plus size={20} className="rotate-45" />
+              <div className="p-8 overflow-y-auto">
+                <div className="flex justify-between items-center mb-8">
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-900">
+                      {transactionType === 'INCOME' ? 'Nova Receita' : 'Nova Despesa'}
+                    </h3>
+                    <p className="text-sm text-slate-500">Preencha os dados da transação abaixo</p>
+                  </div>
+                  <button onClick={() => setIsTransactionModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Plus size={24} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleSaveTransaction} className="space-y-3.5">
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Valor (R$)</label>
-                    <input 
-                      required
-                      type="number" 
-                      step="0.01"
-                      placeholder="0,00"
-                      value={newTransaction.amount}
-                      onChange={(e) => setNewTransaction({...newTransaction, amount: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-bold text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Data</label>
+                <form onSubmit={handleSaveTransaction} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Descrição</label>
                       <input 
                         required
-                        type="date" 
-                        value={newTransaction.date}
-                        onChange={(e) => setNewTransaction({...newTransaction, date: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        type="text" 
+                        placeholder={transactionType === 'INCOME' ? 'Ex: Limpeza - João Silva' : 'Ex: Aluguel'}
+                        value={newTransaction.description}
+                        onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Categoria</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Categoria</label>
                       <select 
                         value={newTransaction.category}
                         onChange={(e) => setNewTransaction({...newTransaction, category: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         {transactionType === 'INCOME' ? (
                           <>
@@ -5468,68 +6381,97 @@ export default function App() {
                         )}
                       </select>
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Descrição</label>
-                    <input 
-                      required
-                      type="text" 
-                      placeholder={transactionType === 'INCOME' ? 'Ex: Limpeza....' : 'Ex: Aluguel...'}
-                      value={newTransaction.description}
-                      onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Pagamento</label>
-                    <select 
-                      value={newTransaction.payment_method}
-                      onChange={(e) => setNewTransaction({...newTransaction, payment_method: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
-                    >
-                      <option value="Dinheiro">Dinheiro</option>
-                      <option value="PIX">PIX</option>
-                      <option value="Cartão de Crédito">Crédito</option>
-                      <option value="Cartão de Débito">Débito</option>
-                      <option value="Transferência">Transf.</option>
-                    </select>
-                  </div>
-
-                  {transactionType === 'INCOME' && (
                     <div>
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.12em] mb-1.5 block">Paciente</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Valor (R$)</label>
+                      <input 
+                        required
+                        type="number" 
+                        step="0.01"
+                        placeholder="0,00"
+                        value={newTransaction.amount}
+                        onChange={(e) => setNewTransaction({...newTransaction, amount: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Data</label>
+                      <input 
+                        required
+                        type="date" 
+                        value={newTransaction.date}
+                        onChange={(e) => setNewTransaction({...newTransaction, date: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Forma de Pagamento</label>
                       <select 
-                        value={newTransaction.patient_id}
-                        onChange={(e) => setNewTransaction({...newTransaction, patient_id: e.target.value})}
-                        className="w-full px-4 py-2.5 bg-white/90 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/10 focus:border-primary/35 outline-none text-[15px] font-medium text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all"
+                        value={newTransaction.payment_method}
+                        onChange={(e) => setNewTransaction({...newTransaction, payment_method: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
                       >
-                        <option value="">Sem paciente</option>
-                        {patients.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
+                        <option value="Dinheiro">Dinheiro</option>
+                        <option value="PIX">PIX</option>
+                        <option value="Cartão de Crédito">Cartão de Crédito</option>
+                        <option value="Cartão de Débito">Cartão de Débito</option>
+                        <option value="Transferência">Transferência</option>
                       </select>
                     </div>
-                  )}
 
-                  <div className="flex gap-3 pt-2">
+                    {transactionType === 'INCOME' && (
+                      <>
+                        <div className="col-span-2">
+                          <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Paciente (Opcional)</label>
+                          <select 
+                            value={newTransaction.patient_id}
+                            onChange={(e) => setNewTransaction({...newTransaction, patient_id: e.target.value})}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                          >
+                            <option value="">Selecione um paciente</option>
+                            {patients.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Procedimento (Opcional)</label>
+                          <input 
+                            type="text" 
+                            placeholder="Ex: Limpeza, Canal..."
+                            value={newTransaction.procedure}
+                            onChange={(e) => setNewTransaction({...newTransaction, procedure: e.target.value})}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                          />
+                        </div>
+                      </>
+                    )}
+                    <div className="col-span-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Observações</label>
+                      <textarea 
+                        rows={2}
+                        value={newTransaction.notes || ''}
+                        onChange={(e) => setNewTransaction({...newTransaction, notes: e.target.value})}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsTransactionModalOpen(false)}
-                      className="flex-1 h-12 border border-slate-200 bg-white/90 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all text-sm"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className={`flex-1 h-12 text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(0,0,0,0.15)] hover:opacity-95 transition-all active:scale-[0.98] text-sm ${
+                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
                         transactionType === 'INCOME' 
-                          ? 'bg-primary' 
-                          : 'bg-rose-600'
+                          ? 'bg-primary shadow-primary/10 hover:opacity-90' 
+                          : 'bg-rose-600 shadow-rose-100 hover:bg-rose-700'
                       }`}
                     >
-                      Salvar
+                      Salvar {transactionType === 'INCOME' ? 'Receita' : 'Despesa'}
                     </button>
                   </div>
                 </form>
@@ -5631,82 +6573,86 @@ export default function App() {
       {/* Modal: Ver Parcelas */}
       <AnimatePresence>
         {isViewInstallmentsModalOpen && selectedPlan && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 pt-14 pb-24 sm:pb-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsViewInstallmentsModalOpen(false)}
-              className="absolute inset-0 bg-[radial-gradient(110%_90%_at_50%_20%,rgba(255,255,255,0.16),rgba(15,23,42,0.72))] backdrop-blur-md"
-            />
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
             <motion.div
-              initial={{ scale: 0.96, opacity: 0, y: 24 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0, y: 24 }}
-              transition={{ duration: 0.24, ease: 'easeOut' }}
-              className="relative w-full max-w-lg rounded-[30px] border border-white/65 bg-[linear-gradient(165deg,rgba(255,255,255,0.97),rgba(248,250,252,0.92))] shadow-[0_24px_70px_rgba(15,23,42,0.2)] overflow-hidden max-h-[calc(100vh-9rem)] sm:max-h-[80vh] overflow-y-auto"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(80%_95%_at_50%_0%,rgba(38,78,54,0.12),rgba(255,255,255,0))] pointer-events-none" />
-              <div className="p-4 sm:p-6 relative">
-                <div className="flex items-start justify-between mb-4 sm:mb-5">
-                  <div>
-                    <h3 className="text-[21px] sm:text-[22px] font-bold text-[#111827] tracking-[-0.02em] leading-tight">Parcelas</h3>
-                    <p className="text-[12px] text-slate-500 mt-0.5">{selectedPlan.procedure}</p>
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
+                    <List size={20} />
                   </div>
-                  <button 
-                    onClick={() => setIsViewInstallmentsModalOpen(false)}
-                    className="w-10 h-10 rounded-full bg-white/90 border border-slate-200/80 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-all flex items-center justify-center shrink-0"
-                  >
-                    <X size={20} />
-                  </button>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">Parcelas do Plano</h3>
+                    <p className="text-xs text-slate-500">{selectedPlan.procedure} - {selectedPatient?.name || selectedPlan.patient_name}</p>
+                  </div>
                 </div>
+                <button 
+                  onClick={() => setIsViewInstallmentsModalOpen(false)}
+                  className="p-2 hover:bg-white rounded-xl transition-colors text-slate-400"
+                >
+                  <X size={20} />
+                </button>
+              </div>
 
+              <div className="p-6 overflow-y-auto">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-full text-[13px]">
+                  <table className="w-full min-w-[600px]">
                     <thead>
-                      <tr className="border-b border-slate-200/60">
-                        <th className="text-left py-2.5 px-2 font-bold text-slate-400 uppercase text-[10px] tracking-wider">Parc.</th>
-                        <th className="text-left py-2.5 px-2 font-bold text-slate-400 uppercase text-[10px] tracking-wider">Valor</th>
-                        <th className="text-left py-2.5 px-2 font-bold text-slate-400 uppercase text-[10px] tracking-wider">Venc.</th>
-                        <th className="text-center py-2.5 px-2 font-bold text-slate-400 uppercase text-[10px] tracking-wider">Status</th>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left py-3 text-xs font-bold text-slate-400 uppercase">Parcela</th>
+                        <th className="text-left py-3 text-xs font-bold text-slate-400 uppercase">Valor</th>
+                        <th className="text-left py-3 text-xs font-bold text-slate-400 uppercase">Vencimento</th>
+                        <th className="text-left py-3 text-xs font-bold text-slate-400 uppercase">Status</th>
+                        <th className="text-right py-3 text-xs font-bold text-slate-400 uppercase">Ação</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100/80">
+                    <tbody className="divide-y divide-slate-50">
                       {installments
                         .filter(inst => inst.payment_plan_id === selectedPlan.id)
                         .sort((a, b) => a.installment_number - b.installment_number)
                         .map((inst) => (
-                          <tr key={inst.id} className="hover:bg-slate-50/60 transition-colors">
-                            <td className="py-2.5 px-2 font-medium text-slate-700">{inst.installment_number}ª</td>
-                            <td className="py-2.5 px-2 font-bold text-slate-900">
+                          <tr key={inst.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-4 text-sm font-medium text-slate-700">{inst.installment_number}ª</td>
+                            <td className="py-4 text-sm font-bold text-slate-900">
                               {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(inst.amount)}
                             </td>
-                            <td className="py-2.5 px-2 text-slate-500">
+                            <td className="py-4 text-sm text-slate-500">
                               {formatDate(inst.due_date)}
                             </td>
-                            <td className="py-2.5 px-2 text-center">
-                              <span className={`inline-block px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                            <td className="py-4">
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                                 inst.status === 'PAID'
-                                  ? 'bg-primary/15 text-primary'
+                                  ? 'bg-primary/10 text-primary'
                                   : isOverdue(inst.due_date)
                                     ? 'bg-rose-100 text-rose-700'
                                     : 'bg-amber-100 text-amber-700'
                               }`}>
-                                {inst.status === 'PAID' ? 'Pago' : isOverdue(inst.due_date) ? 'Atraso' : 'Pend.'}
+                                {inst.status === 'PAID' ? 'Pago' : isOverdue(inst.due_date) ? 'Atrasado' : 'Pendente'}
                               </span>
+                            </td>
+                            <td className="py-4 text-right">
+                              {inst.status === 'PENDING' && (
+                                  <button
+                                    onClick={() => {
+                                      setIsViewInstallmentsModalOpen(false);
+                                      setSelectedInstallment(inst);
+                                      setIsReceiveInstallmentModalOpen(true);
+                                    }}
+                                    className="text-primary hover:opacity-80 font-bold text-xs bg-primary/10 px-3 py-1.5 rounded-lg transition-colors"
+                                  >
+                                  Receber
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
                     </tbody>
                   </table>
                 </div>
-
-                <button 
-                  onClick={() => setIsViewInstallmentsModalOpen(false)}
-                  className="w-full h-12 mt-4 bg-primary text-white font-bold rounded-2xl shadow-[0_14px_34px_rgba(38,78,54,0.2)] hover:opacity-95 transition-all active:scale-[0.98] text-sm"
-                >
-                  Fechar
-                </button>
               </div>
             </motion.div>
           </div>
@@ -5717,14 +6663,13 @@ export default function App() {
       {/* Primary Action & Mobile Bottom Navigation */}
       <div className="fixed bottom-0 left-0 right-0 z-50 tablet-l:hidden no-print">
         {/* Bottom Navigation */}
-        <nav className="border-t border-slate-200/60 bg-white/95 backdrop-blur-md px-1 py-1 flex justify-around items-center">
+        <nav className="bg-white/80 backdrop-blur-xl border-t border-[#C6C6C8]/30 px-2 pt-2 pb-6 flex justify-around items-center">
           <BottomNavItem id="dashboard" label="Início" icon={ClipboardList} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="agenda" label="Agenda" icon={Calendar} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="pacientes" label="Pacientes" icon={Users} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="financeiro" label="Financeiro" icon={DollarSign} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="configuracoes" label="Mais" icon={Settings} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
         </nav>
-        <div className="h-1 bg-gradient-to-r from-transparent via-slate-100 to-transparent" />
       </div>
 
       <AnimatePresence>
