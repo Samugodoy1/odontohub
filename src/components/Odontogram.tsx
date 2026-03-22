@@ -1,6 +1,5 @@
 import React from 'react';
-import { Plus, History, Save, X, Info } from 'lucide-react';
-import { formatDate } from '../utils/dateUtils';
+import { X } from 'lucide-react';
 
 export type ToothStatus = 
   | 'healthy' 
@@ -37,7 +36,22 @@ interface OdontogramProps {
   history?: ToothRecord[];
   onChange?: (toothNumber: number, toothData: ToothData) => void;
   onAddHistory?: (record: Omit<ToothRecord, 'id'>) => Promise<void>;
-  onSelectProcedure?: (toothNumber: number, procedure: string) => void;
+  onSelectProcedure?: (payload: {
+    toothNumber: number;
+    procedure: string;
+    category: 'diagnosis' | 'procedure';
+    mode: 'initial' | 'continuity';
+    status: ToothStatus;
+  }) => void;
+  treatments?: Array<{
+    id: string;
+    tooth_number?: number;
+    procedure?: string;
+    status?: string;
+  }>;
+  activeToothNumbers?: number[];
+  priorityToothNumber?: number | null;
+  highlightedToothNumber?: number | null;
   readOnly?: boolean;
 }
 
@@ -50,19 +64,19 @@ const toothNumbers = {
 
 const statusColors: Record<ToothStatus, string> = {
   healthy: 'bg-white border-slate-300 text-slate-700',
-  decay: 'bg-red-600 border-red-800 text-white',
-  filling: 'bg-blue-600 border-blue-800 text-white',
-  crown: 'bg-amber-600 border-amber-800 text-white',
-  root_canal_done: 'bg-primary border-emerald-950 text-white',
-  root_canal_needed: 'bg-orange-500 border-orange-700 text-white',
-  implant: 'bg-indigo-600 border-indigo-800 text-white',
-  extraction_done: 'bg-slate-800 border-slate-950 text-white',
-  extraction_needed: 'bg-yellow-300 border-yellow-500 text-amber-900',
-  fracture: 'bg-rose-700 border-rose-900 text-white',
-  wear: 'bg-zinc-500 border-zinc-700 text-white',
-  facet: 'bg-cyan-600 border-cyan-800 text-white',
-  prosthesis: 'bg-purple-600 border-purple-800 text-white',
-  missing: 'bg-slate-200 border-slate-400 text-slate-600',
+  decay: 'bg-rose-50 border-rose-300 text-rose-800',
+  filling: 'bg-sky-50 border-sky-300 text-sky-800',
+  crown: 'bg-amber-50 border-amber-300 text-amber-900',
+  root_canal_done: 'bg-emerald-50 border-emerald-300 text-emerald-800',
+  root_canal_needed: 'bg-orange-50 border-orange-300 text-orange-800',
+  implant: 'bg-indigo-50 border-indigo-300 text-indigo-800',
+  extraction_done: 'bg-slate-100 border-slate-300 text-slate-700',
+  extraction_needed: 'bg-yellow-50 border-yellow-300 text-yellow-800',
+  fracture: 'bg-rose-50 border-rose-300 text-rose-800',
+  wear: 'bg-zinc-100 border-zinc-300 text-zinc-700',
+  facet: 'bg-cyan-50 border-cyan-300 text-cyan-800',
+  prosthesis: 'bg-purple-50 border-purple-300 text-purple-800',
+  missing: 'bg-slate-100 border-slate-300 text-slate-600',
 };
 
 const statusLabels: Record<ToothStatus, string> = {
@@ -82,98 +96,358 @@ const statusLabels: Record<ToothStatus, string> = {
   missing: 'Ausente',
 };
 
+const diagnosisActions = [
+  { key: 'decay', label: 'Carie', status: 'decay' as ToothStatus, category: 'diagnosis' as const },
+  { key: 'fracture', label: 'Fratura', status: 'fracture' as ToothStatus, category: 'diagnosis' as const },
+];
+
+const procedureActions = [
+  { key: 'filling', label: 'Restauracao', status: 'filling' as ToothStatus, category: 'procedure' as const },
+  { key: 'root-canal', label: 'Canal', status: 'root_canal_needed' as ToothStatus, category: 'procedure' as const },
+  { key: 'extraction', label: 'Extracao', status: 'extraction_needed' as ToothStatus, category: 'procedure' as const },
+  { key: 'crown', label: 'Coroa', status: 'crown' as ToothStatus, category: 'procedure' as const },
+];
+
+const continuationActions = [
+  { key: 'adjust-restoration', label: 'Restauracao', status: 'filling' as ToothStatus, category: 'procedure' as const },
+  { key: 'continue-canal', label: 'Canal', status: 'root_canal_done' as ToothStatus, category: 'procedure' as const },
+  { key: 'extraction', label: 'Extracao', status: 'extraction_done' as ToothStatus, category: 'procedure' as const },
+  { key: 'crown', label: 'Coroa', status: 'crown' as ToothStatus, category: 'procedure' as const },
+];
+
+interface ToothProps {
+  number: number;
+  status: ToothStatus;
+  selected: boolean;
+  isInTreatment: boolean;
+  hasDiagnosis: boolean;
+  isCompleted: boolean;
+  isPriority: boolean;
+  disabled: boolean;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onHover: (event: React.MouseEvent<HTMLButtonElement>, num: number) => void;
+  onLeave: () => void;
+  buttonRef?: (el: HTMLButtonElement | null) => void;
+}
+
+const Tooth: React.FC<ToothProps> = ({ number, status, selected, isInTreatment, hasDiagnosis, isCompleted, isPriority, disabled, onClick, onHover, onLeave, buttonRef }) => {
+  return (
+    <div className="flex flex-col items-center gap-1 relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        disabled={disabled}
+        onClick={onClick}
+        onMouseEnter={(event) => onHover(event, number)}
+        onMouseLeave={onLeave}
+        className={`
+          w-12 h-[4.1rem] sm:w-[3.15rem] sm:h-[4.45rem] rounded-[18px] border-[1.5px]
+          flex items-center justify-center text-[11px] sm:text-[12px] font-extrabold tracking-tight
+          transition-all duration-200
+          ${statusColors[status]}
+          ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
+          ${isInTreatment ? 'ring-2 ring-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.20)]' : ''}
+          ${hasDiagnosis ? 'border-rose-400 bg-rose-50/90 shadow-[0_0_0_2px_rgba(244,63,94,0.12)]' : ''}
+          ${isCompleted ? 'ring-2 ring-sky-400 shadow-[0_0_0_3px_rgba(56,189,248,0.16)]' : ''}
+          ${isPriority ? 'ring-2 ring-amber-400 shadow-[0_0_0_4px_rgba(251,191,36,0.18)]' : ''}
+          ${selected
+            ? 'scale-[1.06] ring-2 ring-primary shadow-[0_16px_28px_rgba(12,155,114,0.24)]'
+            : 'hover:scale-[1.03] hover:shadow-[0_10px_18px_rgba(15,23,42,0.10)] active:scale-[0.98]'}
+        `}
+      >
+        {isInTreatment && (
+          <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-white bg-emerald-500" />
+        )}
+        {isCompleted && (
+          <span className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border border-white bg-sky-500" />
+        )}
+        {number}
+      </button>
+      {isPriority && (
+        <span className="mt-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-900">
+          Prior.
+        </span>
+      )}
+    </div>
+  );
+};
+
+interface ActionMenuProps {
+  open: boolean;
+  selectedTooth: number | null;
+  selectedStatus: ToothStatus;
+  hasTreatment: boolean;
+  currentProcedure?: string;
+  mobile: boolean;
+  anchorRect: DOMRect | null;
+  onClose: () => void;
+  onAction: (action: { label: string; status: ToothStatus; category: 'diagnosis' | 'procedure'; mode: 'initial' | 'continuity' }) => void;
+}
+
+const ActionMenu: React.FC<ActionMenuProps> = ({
+  open,
+  selectedTooth,
+  selectedStatus,
+  hasTreatment,
+  currentProcedure,
+  mobile,
+  anchorRect,
+  onClose,
+  onAction,
+}) => {
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!menuRef.current) return;
+      const target = event.target as Node;
+      if (!menuRef.current.contains(target)) onClose();
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+    };
+  }, [open, onClose]);
+
+  if (!open || selectedTooth === null) return null;
+
+  const actions = hasTreatment ? continuationActions : [...diagnosisActions, ...procedureActions];
+  const menuTitle = hasTreatment ? 'Continuar tratamento' : 'Iniciar acao';
+
+  if (mobile) {
+    return (
+      <div className="fixed inset-0 z-[9999]">
+        <div className="absolute inset-0 bg-slate-900/35 backdrop-blur-[1px] transition-opacity duration-200" />
+        <div
+          ref={menuRef}
+          className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-white p-5 shadow-2xl border-t border-slate-200 transition-transform duration-300 translate-y-0"
+        >
+          <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Dente {selectedTooth}</p>
+              <p className="text-xs text-slate-500">{menuTitle}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {hasTreatment && (
+            <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+              Procedimento atual: {currentProcedure || 'Em andamento'}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2 pb-2">
+            {actions.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                onClick={() => onAction({ label: action.label, status: action.status, category: action.category, mode: hasTreatment ? 'continuity' : 'initial' })}
+                className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all duration-200
+                  ${selectedStatus === action.status
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white hover:border-slate-300'}
+                `}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const top = anchorRect ? anchorRect.bottom + 10 : 0;
+  const left = anchorRect ? Math.max(12, anchorRect.left - 20) : 12;
+
+  return (
+    <div className="fixed inset-0 z-[9999] pointer-events-none">
+      <div
+        ref={menuRef}
+        style={{ top, left }}
+        className="pointer-events-auto absolute w-[260px] rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_22px_45px_rgba(15,23,42,0.18)] transition-all duration-200"
+      >
+        <p className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Dente {selectedTooth}</p>
+        <p className="mb-2 px-1 text-[11px] text-slate-500">{menuTitle}</p>
+        {hasTreatment && (
+          <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-900">
+            Atual: {currentProcedure || 'Em andamento'}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-1.5">
+          {actions.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              onClick={() => onAction({ label: action.label, status: action.status, category: action.category, mode: hasTreatment ? 'continuity' : 'initial' })}
+              className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-all duration-200
+                ${selectedStatus === action.status
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white hover:border-slate-300'}
+              `}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const Odontogram: React.FC<OdontogramProps> = ({ 
   data = {}, 
   history = [], 
   onChange, 
   onAddHistory,
   onSelectProcedure,
+  treatments = [],
+  activeToothNumbers = [],
+  priorityToothNumber = null,
+  highlightedToothNumber = null,
   readOnly = false 
 }) => {
   const [selectedTooth, setSelectedTooth] = React.useState<number | null>(null);
-  const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [newRecord, setNewRecord] = React.useState({
-    procedure: '',
-    notes: '',
-    date: new Date().toISOString().split('T')[0],
-    status: 'healthy' as ToothStatus
-  });
-  const [isSaving, setIsSaving] = React.useState(false);
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [isMobile, setIsMobile] = React.useState(false);
+  const [anchorRect, setAnchorRect] = React.useState<DOMRect | null>(null);
+  const [hoveredTooth, setHoveredTooth] = React.useState<number | null>(null);
+  const [hoverRect, setHoverRect] = React.useState<DOMRect | null>(null);
+  const toothRefs = React.useRef<Record<number, HTMLButtonElement | null>>({});
+  const activeToothSet = React.useMemo(() => new Set(activeToothNumbers), [activeToothNumbers]);
 
-  const handleToothClick = (num: number) => {
+  const treatmentByTooth = React.useMemo(() => {
+    const map = new Map<number, { procedure?: string; status?: string }>();
+    treatments.forEach((item) => {
+      const toothNumber = Number(item.tooth_number);
+      if (Number.isFinite(toothNumber) && toothNumber > 0 && !map.has(toothNumber)) {
+        map.set(toothNumber, { procedure: item.procedure, status: item.status });
+      }
+    });
+    return map;
+  }, [treatments]);
+
+  React.useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  const getToothStatus = React.useCallback((num: number): ToothStatus => {
+    return data[num]?.status || 'healthy';
+  }, [data]);
+
+  const handleToothClick = (num: number, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (readOnly) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setHoveredTooth(null);
+    setHoverRect(null);
     setSelectedTooth(num);
-    const tooth = data[num] || { status: 'healthy', notes: '' };
-    setNewRecord(prev => ({ ...prev, status: tooth.status, procedure: '' }));
-    setIsModalOpen(true);
+    setAnchorRect(rect);
+    setIsMenuOpen(true);
   };
 
-  const handleSave = async () => {
-    if (selectedTooth === null || !onAddHistory) return;
-    
-    setIsSaving(true);
-    try {
-      // 1. Add to history
-      await onAddHistory({
-        tooth_number: selectedTooth,
-        procedure: newRecord.procedure || statusLabels[newRecord.status],
-        notes: newRecord.notes,
-        date: newRecord.date
-      });
+  const handleAction = ({ label, status, category, mode }: { label: string; status: ToothStatus; category: 'diagnosis' | 'procedure'; mode: 'initial' | 'continuity' }) => {
+    if (selectedTooth === null) return;
 
-      // 2. Update current status in odontogram
+    // Close first for immediate UX feedback even if callbacks fail.
+    setIsMenuOpen(false);
+
+    try {
       if (onChange) {
-        onChange(selectedTooth, { 
-          status: newRecord.status, 
-          notes: newRecord.notes 
+        onChange(selectedTooth, {
+          status,
+          notes: data[selectedTooth]?.notes || '',
         });
       }
-
-      setIsModalOpen(false);
-      setNewRecord({
-        procedure: '',
-        notes: '',
-        date: new Date().toISOString().split('T')[0],
-        status: 'healthy'
-      });
     } catch (error) {
-      console.error('Error saving tooth record:', error);
-      alert('Erro ao salvar registro do dente.');
-    } finally {
-      setIsSaving(false);
+      console.error('Error applying tooth status change:', error);
+    }
+
+    try {
+      if (onSelectProcedure) {
+        Promise.resolve(
+          onSelectProcedure({
+            toothNumber: selectedTooth,
+            procedure: label,
+            category,
+            mode,
+            status,
+          })
+        ).catch((error) => {
+          console.error('Error applying selected procedure:', error);
+        });
+      }
+    } catch (error) {
+      console.error('Error dispatching selected procedure:', error);
+    }
+
+    if (onAddHistory) {
+      const today = new Date().toISOString().split('T')[0];
+      onAddHistory({
+        tooth_number: selectedTooth,
+        procedure: label,
+        notes: '',
+        date: today,
+      }).catch((error) => {
+        console.error('Error adding tooth history:', error);
+      });
     }
   };
 
-  const toothHistory = selectedTooth !== null 
-    ? history.filter(h => h.tooth_number === selectedTooth)
-    : [];
-
-  const renderTooth = (num: number) => {
-    const tooth = data[num] || { status: 'healthy', notes: '' };
-    const isSelected = selectedTooth === num;
-
-    return (
-      <div key={num} className="flex flex-col items-center gap-1">
-        <button
-          type="button"
-          onClick={() => handleToothClick(num)}
-          className={`
-            w-12 h-[4.1rem] sm:w-[3.15rem] sm:h-[4.45rem] rounded-[18px] border-[1.5px] flex items-center justify-center text-[11px] sm:text-[12px] font-extrabold tracking-tight transition-all duration-200 active:scale-[0.98]
-            ${statusColors[tooth.status]}
-            ${isSelected ? 'ring-2 ring-primary scale-[1.08] z-10 shadow-[0_16px_28px_rgba(12,155,114,0.24)]' : 'hover:scale-[1.03] hover:shadow-[0_10px_18px_rgba(15,23,42,0.10)]'}
-          `}
-        >
-          {num}
-        </button>
-      </div>
-    );
-  };
+  const renderTooth = (num: number) => (
+    <Tooth
+      key={num}
+      number={num}
+      status={getToothStatus(num)}
+      selected={(selectedTooth === num && isMenuOpen) || highlightedToothNumber === num}
+      isInTreatment={activeToothSet.has(num)}
+      hasDiagnosis={['decay', 'fracture'].includes(getToothStatus(num))}
+      isCompleted={['root_canal_done', 'extraction_done'].includes(getToothStatus(num))}
+      isPriority={priorityToothNumber === num}
+      disabled={readOnly}
+      onClick={(event) => handleToothClick(num, event)}
+      onHover={(event, toothNumber) => {
+        if (isMobile) return;
+        setHoveredTooth(toothNumber);
+        setHoverRect(event.currentTarget.getBoundingClientRect());
+      }}
+      onLeave={() => {
+        if (isMenuOpen) return;
+        setHoveredTooth(null);
+        setHoverRect(null);
+      }}
+      buttonRef={(el) => {
+        toothRefs.current[num] = el;
+      }}
+    />
+  );
 
   return (
     <div className="space-y-7 p-2 sm:p-3 bg-transparent rounded-none shadow-none border-none">
       <div className="flex items-start justify-between gap-3 px-1">
         <div>
           <h3 className="text-lg sm:text-[22px] font-extrabold tracking-[-0.015em] text-slate-950">Visão dentária</h3>
-          <p className="text-xs sm:text-sm leading-6 text-slate-700">Selecione o dente para atualizar procedimentos e evolução.</p>
+          <p className="text-xs sm:text-sm leading-6 text-slate-700">Clique em um dente para abrir o menu rapido de acoes.</p>
         </div>
       </div>
 
@@ -209,167 +483,29 @@ export const Odontogram: React.FC<OdontogramProps> = ({
         ))}
       </div>
 
-      {/* Tooth Detail Modal */}
-      {isModalOpen && selectedTooth !== null && (
-        <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#F7F8FA] rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 border-none">
-            {/* Header */}
-            <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-white">
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold border-none ${statusColors[data[selectedTooth]?.status || 'healthy'].split(' ')[0]}`}>
-                  {selectedTooth}
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-[#0F172A]">Dente {selectedTooth}</h3>
-                  <p className="text-sm text-[#64748B]">Histórico Clínico e Procedimentos</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="p-2 hover:bg-[#F1F5F9] rounded-full transition-colors text-[#64748B]"
-              >
-                <X size={24} />
-              </button>
-            </div>
+      <ActionMenu
+        open={isMenuOpen}
+        selectedTooth={selectedTooth}
+        selectedStatus={selectedTooth !== null ? getToothStatus(selectedTooth) : 'healthy'}
+        hasTreatment={selectedTooth !== null ? treatmentByTooth.has(selectedTooth) : false}
+        currentProcedure={selectedTooth !== null ? treatmentByTooth.get(selectedTooth)?.procedure : undefined}
+        mobile={isMobile}
+        anchorRect={anchorRect}
+        onClose={() => setIsMenuOpen(false)}
+        onAction={handleAction}
+      />
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-8">
-              {/* Current Status */}
-              <section>
-                <div className="flex items-center gap-2 mb-4">
-                  <Info size={18} className="text-primary" />
-                  <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Status Atual</h4>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(Object.entries(statusLabels) as [ToothStatus, string][]).map(([status, label]) => (
-                    <button
-                      key={status}
-                      onClick={() => setNewRecord(prev => ({ ...prev, status }))}
-                      className={`
-                        px-3 py-2 rounded-xl text-[10px] font-bold transition-all border-none text-center
-                        ${newRecord.status === status 
-                          ? `${statusColors[status].split(' ')[0]} ${statusColors[status].split(' ')[2]} ring-2 ring-offset-1 ring-primary` 
-                          : 'bg-white text-[#64748B] hover:bg-slate-50'}
-                      `}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              {/* Clinical History */}
-              <section>
-                <div className="flex items-center gap-2 mb-4">
-                  <History size={18} className="text-primary" />
-                  <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Histórico Clínico</h4>
-                </div>
-                {toothHistory.length > 0 ? (
-                  <div className="space-y-3">
-                    {toothHistory.map((record, idx) => (
-                      <div key={record.id || idx} className="p-4 rounded-2xl bg-white shadow-sm flex justify-between items-start gap-4 border-none">
-                        <div>
-                          <p className="font-bold text-[#0F172A]">{record.procedure}</p>
-                          {record.notes && <p className="text-sm text-[#64748B] mt-1 italic">"{record.notes}"</p>}
-                          <p className="text-[10px] text-[#94A3B8] mt-2 uppercase font-bold">Dentista: {record.dentist_name || 'Não informado'}</p>
-                        </div>
-                        <span className="text-xs font-mono text-[#64748B] bg-[#F8FAFC] px-2 py-1 rounded border-none">
-                          {formatDate(record.date)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200">
-                    <p className="text-[#64748B] text-sm">Nenhum registro anterior para este dente.</p>
-                  </div>
-                )}
-              </section>
-
-              {/* Add New Procedure */}
-              {!readOnly && (
-                <section className="bg-white p-6 rounded-[24px] shadow-sm border-none">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Plus size={18} className="text-primary" />
-                    <h4 className="font-bold text-[#0F172A] uppercase tracking-wider text-xs">Adicionar Novo Procedimento</h4>
-                  </div>
-                  
-                  {onSelectProcedure && (
-                    <div className="mb-6">
-                      <p className="text-[10px] font-bold text-[#64748B] uppercase mb-2">Planejar para Plano de Tratamento</p>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {['Restauração', 'Endodontia', 'Coroa', 'Implante', 'Extração'].map(proc => (
-                          <button
-                            key={proc}
-                            onClick={() => onSelectProcedure(selectedTooth, proc)}
-                            className="px-3 py-2 bg-[#F8FAFC] text-[#0F172A] rounded-xl text-[10px] font-bold hover:bg-primary hover:text-white transition-all border-none"
-                          >
-                            {proc}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="my-4 border-t border-slate-50" />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Procedimento</label>
-                      <input 
-                        type="text"
-                        value={newRecord.procedure}
-                        onChange={(e) => setNewRecord(prev => ({ ...prev, procedure: e.target.value }))}
-                        placeholder="Ex: Restauração em resina"
-                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Data</label>
-                      <input 
-                        type="date"
-                        value={newRecord.date}
-                        onChange={(e) => setNewRecord(prev => ({ ...prev, date: e.target.value }))}
-                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm"
-                      />
-                    </div>
-                    <div className="sm:col-span-2 space-y-1">
-                      <label className="text-[10px] font-bold text-[#64748B] uppercase ml-1">Observações</label>
-                      <textarea 
-                        value={newRecord.notes}
-                        onChange={(e) => setNewRecord(prev => ({ ...prev, notes: e.target.value }))}
-                        placeholder="Detalhes adicionais sobre o procedimento..."
-                        rows={2}
-                        className="w-full px-4 py-2.5 rounded-xl border-none bg-[#F8FAFC] focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm resize-none"
-                      />
-                    </div>
-                  </div>
-                </section>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-6 border-t border-slate-50 flex items-center justify-end gap-3 bg-white">
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="px-6 py-2.5 rounded-xl text-sm font-bold text-[#64748B] hover:bg-[#F1F5F9] transition-all border-none"
-              >
-                Fechar
-              </button>
-              {!readOnly && (
-                <button 
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="px-8 py-2.5 rounded-xl text-sm font-bold text-white bg-primary hover:opacity-90 shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 border-none"
-                >
-                  {isSaving ? 'Salvando...' : (
-                    <>
-                      <Save size={18} />
-                      Salvar Registro
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
+      {!isMobile && hoveredTooth !== null && hoverRect && (
+        <div
+          className="fixed z-[9998] pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_16px_34px_rgba(15,23,42,0.16)]"
+          style={{
+            top: hoverRect.top - 70,
+            left: Math.max(10, hoverRect.left - 12),
+          }}
+        >
+          <p className="text-xs font-bold text-slate-900">Dente {hoveredTooth}</p>
+          <p className="text-[11px] text-slate-600">Procedimento: {treatmentByTooth.get(hoveredTooth)?.procedure || 'Nao definido'}</p>
+          <p className="text-[11px] text-slate-600">Status: {statusLabels[getToothStatus(hoveredTooth)]}</p>
         </div>
       )}
     </div>

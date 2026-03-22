@@ -1,9 +1,31 @@
 import { Request, Response } from 'express';
 import { query } from '../utils/db.js';
 
+const syncAppointmentStatusesForDentist = async (dentistId: number) => {
+  await query(
+    `
+      UPDATE appointments
+      SET status = CASE
+        WHEN end_time <= NOW() AND status <> 'FINISHED' THEN 'FINISHED'
+        WHEN start_time <= NOW() AND end_time > NOW() AND status <> 'IN_PROGRESS' THEN 'IN_PROGRESS'
+        ELSE status
+      END
+      WHERE dentist_id = $1
+        AND status <> 'CANCELLED'
+        AND (
+          (end_time <= NOW() AND status <> 'FINISHED')
+          OR (start_time <= NOW() AND end_time > NOW() AND status <> 'IN_PROGRESS')
+        )
+    `,
+    [dentistId]
+  );
+};
+
 export const getAppointments = async (req: Request, res: Response) => {
   const user = req.user!;
   try {
+    await syncAppointmentStatusesForDentist(user.id);
+
     const sql = `
       SELECT a.*, p.name as patient_name, p.phone as patient_phone, d.name as dentist_name 
       FROM appointments a

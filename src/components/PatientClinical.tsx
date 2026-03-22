@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
-  ArrowRight,
   Calendar,
   Camera,
   CheckCircle2,
@@ -14,10 +13,9 @@ import {
   Phone,
   User,
   UserRound,
-  XCircle,
   Zap,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { NovaEvolucao } from './NovaEvolucao';
 import { Odontogram } from './Odontogram';
 import { formatDate } from '../utils/dateUtils';
@@ -34,6 +32,7 @@ interface PatientClinicalProps {
 type InfoTab = 'anamneses' | 'dados' | 'imagens' | 'financeiro';
 
 type ClinicalStatus = 'EM_TRATAMENTO' | 'REVISAO' | 'ABANDONADO' | 'NOVO';
+type GlobalCareState = 'URGENTE' | 'EM_TRATAMENTO' | 'ESTAVEL';
 
 const statusConfig: Record<ClinicalStatus, { label: string; className: string }> = {
   EM_TRATAMENTO: {
@@ -118,6 +117,53 @@ const resolveTimelineIcon = (label: string) => {
   return FileText;
 };
 
+type ClinicalEventType = 'TREATMENT_START' | 'PLAN_CHANGE' | 'PROCEDURE_COMPLETION' | 'OBSERVATION' | 'DIAGNOSIS';
+
+const resolveClinicalEventType = (entry: any): ClinicalEventType => {
+  const explicitType = String(entry?.event_type || '').toUpperCase();
+  if (explicitType === 'TREATMENT_START') return 'TREATMENT_START';
+  if (explicitType === 'PLAN_CHANGE') return 'PLAN_CHANGE';
+  if (explicitType === 'PROCEDURE_COMPLETION') return 'PROCEDURE_COMPLETION';
+  if (explicitType === 'OBSERVATION') return 'OBSERVATION';
+  if (explicitType === 'DIAGNOSIS') return 'DIAGNOSIS';
+
+  const procedure = String(entry?.procedure || entry?.procedure_performed || '').toLowerCase();
+  const notes = String(entry?.notes || '').toLowerCase();
+
+  if (procedure.includes('diagnostico') || notes.includes('diagnóstico registrado') || notes.includes('diagnostico registrado')) {
+    return 'DIAGNOSIS';
+  }
+  if (procedure.includes('conclus') || notes.includes('procedimento conclu')) {
+    return 'PROCEDURE_COMPLETION';
+  }
+  if (procedure.includes('convers') || notes.includes('convertido') || notes.includes('ajustado')) {
+    return 'PLAN_CHANGE';
+  }
+  if (procedure.includes('inicio') || procedure.includes('início')) {
+    return 'TREATMENT_START';
+  }
+
+  return 'OBSERVATION';
+};
+
+const globalStateConfig: Record<GlobalCareState, { label: string; tone: string; helper: string }> = {
+  URGENTE: {
+    label: 'Urgente',
+    tone: 'bg-rose-100 text-rose-900 border border-rose-300',
+    helper: 'Demanda decisão clínica imediata',
+  },
+  EM_TRATAMENTO: {
+    label: 'Em tratamento',
+    tone: 'bg-amber-100 text-amber-900 border border-amber-300',
+    helper: 'Existe conduta ativa em andamento',
+  },
+  ESTAVEL: {
+    label: 'Estável',
+    tone: 'bg-emerald-100 text-emerald-900 border border-emerald-300',
+    helper: 'Sem pendências críticas no momento',
+  },
+};
+
 export const PatientClinical: React.FC<PatientClinicalProps> = ({
   patient,
   appointments,
@@ -127,10 +173,15 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   navigate: appNavigate,
 }) => {
   const [isAddingEvolution, setIsAddingEvolution] = useState(false);
-  const [isOdontoModalOpen, setIsOdontoModalOpen] = useState(false);
-  const [selectedTooth, setSelectedTooth] = useState<number | null>(null);
   const [infoTab, setInfoTab] = useState<InfoTab>('anamneses');
   const [showAllEvolutions, setShowAllEvolutions] = useState(false);
+  const [highlightedTreatmentId, setHighlightedTreatmentId] = useState<string | null>(null);
+  const [highlightedTimelineId, setHighlightedTimelineId] = useState<string | null>(null);
+  const [highlightedToothNumber, setHighlightedToothNumber] = useState<number | null>(null);
+  const [selectedTreatmentAction, setSelectedTreatmentAction] = useState<any | null>(null);
+  const [optimisticOdontogram, setOptimisticOdontogram] = useState<Record<number, any>>({});
+  const [optimisticTreatments, setOptimisticTreatments] = useState<any[]>([]);
+  const [optimisticEvolutions, setOptimisticEvolutions] = useState<any[]>([]);
   const infoPanelRef = useRef<HTMLElement | null>(null);
   const odontogramRef = useRef<HTMLElement | null>(null);
 
@@ -139,58 +190,105 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   const clinicalStatus = resolveClinicalStatus(patient, appointments);
   const clinicalBadge = statusConfig[clinicalStatus];
 
+  const mergedTreatmentPlan = useMemo(() => {
+    const serverItems = patient?.treatmentPlan || [];
+    if (optimisticTreatments.length === 0) return serverItems;
+
+    const knownIds = new Set(serverItems.map((item: any) => item.id));
+    const optimisticMap = new Map(optimisticTreatments.map((item: any) => [item.id, item]));
+    const mergedKnown = serverItems.map((item: any) => optimisticMap.get(item.id) || item);
+    const optimisticOnly = optimisticTreatments.filter((item: any) => !knownIds.has(item.id));
+    return [...optimisticOnly, ...mergedKnown];
+  }, [patient?.treatmentPlan, optimisticTreatments]);
+
   const treatmentInProgress = useMemo(
     () =>
-      (patient?.treatmentPlan || []).filter((item: any) =>
+      mergedTreatmentPlan.filter((item: any) =>
         ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase())
       ),
-    [patient?.treatmentPlan]
+    [mergedTreatmentPlan]
   );
 
   const timelineItems = useMemo(() => {
-    const evolutionEvents = (patient?.evolution || []).map((e: any) => ({
-      id: `evo-${e.id}`,
-      date: e.date,
-      title: e.procedure || 'Evolução clínica',
-      notes: e.notes || '',
-      status: 'CONCLUIDO',
-      type: 'EVO',
-    }));
+    const mergedEvolutions = [
+      ...optimisticEvolutions,
+      ...(patient?.evolution || []).filter(
+        (e: any) => !optimisticEvolutions.some((opt) => opt.id === e.id)
+      ),
+    ];
 
-    const appointmentEvents = (appointments || [])
-      .filter((a: any) => a.patient_id === patient.id)
-      .filter((a: any) => ['FINISHED', 'IN_PROGRESS'].includes(String(a.status || '').toUpperCase()))
-      .map((a: any) => ({
-        id: `app-${a.id}`,
-        date: a.start_time,
-        title: a.notes || 'Consulta clínica',
-        notes: `Atendimento ${String(a.status || '').toUpperCase() === 'IN_PROGRESS' ? 'em andamento' : 'concluído'}`,
-        status: String(a.status || '').toUpperCase() === 'IN_PROGRESS' ? 'EM_ANDAMENTO' : 'CONCLUIDO',
-        type: 'APP',
-      }));
+    const evolutionEvents = mergedEvolutions
+      .map((e: any) => {
+        const eventType = resolveClinicalEventType(e);
+        return {
+          id: `evo-${e.id}`,
+          date: e.date,
+          title: e.procedure || 'Evolução clínica',
+          notes: e.notes || '',
+          status:
+            eventType === 'PROCEDURE_COMPLETION'
+              ? 'CONCLUIDO'
+              : eventType === 'OBSERVATION'
+                ? 'OBSERVACAO'
+                : 'EM_ANDAMENTO',
+          type: eventType,
+        };
+      })
+      .filter((event: any) => event.type !== 'DIAGNOSIS');
 
-    return [...evolutionEvents, ...appointmentEvents].sort(
+    return evolutionEvents.sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
-  }, [patient?.evolution, appointments, patient?.id]);
+  }, [patient?.evolution, optimisticEvolutions]);
 
-  const handleAddPlanItem = async (item: any) => {
+  const mergedOdontogram = useMemo(
+    () => ({
+      ...(patient?.odontogram || {}),
+      ...optimisticOdontogram,
+    }),
+    [patient?.odontogram, optimisticOdontogram]
+  );
+
+  const handleOdontogramStatusChange = (toothNumber: number, toothData: any) => {
+    setOptimisticOdontogram((prev) => ({ ...prev, [toothNumber]: toothData }));
+
     const updatedPatient = {
       ...patient,
-      treatmentPlan: [
-        ...(patient.treatmentPlan || []),
-        {
-          ...item,
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          created_at: new Date().toISOString(),
-        },
-      ],
+      odontogram: {
+        ...(patient?.odontogram || {}),
+        [toothNumber]: toothData,
+      },
     };
-    await onUpdatePatient(updatedPatient);
+
+    onUpdatePatient(updatedPatient)
+      .then(() => {
+        setOptimisticOdontogram((prev) => {
+          const next = { ...prev };
+          delete next[toothNumber];
+          return next;
+        });
+      })
+      .catch((error) => {
+        console.error('Error updating odontogram tooth status:', error);
+      });
   };
 
-  const handleOdontoProcedureSelect = async (procedure: string) => {
-    if (selectedTooth === null) return;
+  const handleOdontoProcedureSelect = async ({
+    toothNumber,
+    procedure,
+    category,
+    mode,
+  }: {
+    toothNumber: number;
+    procedure: string;
+    category: 'diagnosis' | 'procedure';
+    mode: 'initial' | 'continuity';
+    status: any;
+  }) => {
+    const ts = Date.now();
+    const treatmentId = `tp-${ts}-${Math.random().toString(36).slice(2, 9)}`;
+    const evolutionId = `evo-odonto-${ts}-${Math.random().toString(36).slice(2, 8)}`;
+    const nowIso = new Date().toISOString();
 
     const values: Record<string, number> = {
       Restauração: 150,
@@ -198,17 +296,230 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       Coroa: 1200,
       Implante: 2500,
       Extração: 200,
+      Carie: 120,
+      Restauracao: 150,
+      Canal: 450,
+      Extracao: 200,
     };
 
-    await handleAddPlanItem({
-      tooth_number: selectedTooth,
-      procedure,
-      value: values[procedure] || 0,
-      status: 'PLANEJADO',
-    });
+    const existingTreatment = (patient.treatmentPlan || []).find(
+      (item: any) => Number(item.tooth_number) === toothNumber && ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase())
+    );
 
-    setIsOdontoModalOpen(false);
-    setSelectedTooth(null);
+    const nextTreatmentPlan = category === 'procedure'
+      ? mode === 'continuity' && existingTreatment
+        ? (patient.treatmentPlan || []).map((item: any) =>
+            item.id === existingTreatment.id
+              ? { ...item, status: 'APROVADO', updated_at: nowIso }
+              : item
+          )
+        : [
+            ...(patient.treatmentPlan || []),
+            {
+              id: treatmentId,
+              tooth_number: toothNumber,
+              procedure,
+              value: values[procedure] || 0,
+              status: 'PLANEJADO',
+              created_at: nowIso,
+            },
+          ]
+      : (patient.treatmentPlan || []);
+
+    const nextTreatmentId = category === 'procedure'
+      ? (mode === 'continuity' && existingTreatment ? existingTreatment.id : treatmentId)
+      : null;
+
+    const optimisticTreatment = category === 'procedure'
+      ? mode === 'continuity' && existingTreatment
+        ? { ...existingTreatment, status: 'APROVADO', updated_at: nowIso }
+        : {
+            id: treatmentId,
+            tooth_number: toothNumber,
+            procedure,
+            value: values[procedure] || 0,
+            status: 'PLANEJADO',
+            created_at: nowIso,
+          }
+      : null;
+
+    const shouldAppendEvolution = category === 'procedure';
+
+    const optimisticEvolution = shouldAppendEvolution
+      ? {
+          id: evolutionId,
+          date: nowIso,
+          notes:
+            mode === 'continuity' && existingTreatment
+              ? `Plano ajustado no dente ${toothNumber}: ${existingTreatment.procedure} convertido para ${procedure}.`
+              : `Início de tratamento no dente ${toothNumber}: ${procedure}.`,
+          procedure_performed:
+            mode === 'continuity' && existingTreatment
+              ? `Conversão de plano`
+              : `Início de tratamento`,
+          procedure:
+            mode === 'continuity' && existingTreatment
+              ? `Conversão - ${existingTreatment.procedure} -> ${procedure}`
+              : `Início - ${procedure}`,
+          event_type:
+            mode === 'continuity' && existingTreatment
+              ? 'PLAN_CHANGE'
+              : 'TREATMENT_START',
+        }
+      : null;
+
+    if (optimisticTreatment) {
+      setOptimisticTreatments((prev) => {
+        if (mode === 'continuity' && existingTreatment) {
+          const withoutCurrent = prev.filter((item: any) => item.id !== existingTreatment.id);
+          return [optimisticTreatment, ...withoutCurrent];
+        }
+        return [optimisticTreatment, ...prev];
+      });
+    }
+    if (optimisticEvolution) {
+      setOptimisticEvolutions((prev) => [optimisticEvolution, ...prev]);
+    }
+
+    const updatedPatient = {
+      ...patient,
+      treatmentPlan: nextTreatmentPlan,
+      evolution: shouldAppendEvolution
+        ? [
+            {
+              id: evolutionId,
+              date: nowIso,
+              notes:
+                mode === 'continuity' && existingTreatment
+                  ? `Plano ajustado no dente ${toothNumber}: ${existingTreatment.procedure} convertido para ${procedure}.`
+                  : `Início de tratamento no dente ${toothNumber}: ${procedure}.`,
+              procedure_performed:
+                mode === 'continuity' && existingTreatment
+                  ? `Conversão de plano`
+                  : `Início de tratamento`,
+              procedure:
+                mode === 'continuity' && existingTreatment
+                  ? `Conversão - ${existingTreatment.procedure} -> ${procedure}`
+                  : `Início - ${procedure}`,
+              event_type:
+                mode === 'continuity' && existingTreatment
+                  ? 'PLAN_CHANGE'
+                  : 'TREATMENT_START',
+            },
+            ...(patient.evolution || []),
+          ]
+        : (patient.evolution || []),
+    };
+
+    try {
+      await onUpdatePatient(updatedPatient);
+    } catch (error) {
+      console.error('Error applying odontogram action:', error);
+    }
+
+    if (nextTreatmentId) setHighlightedTreatmentId(nextTreatmentId);
+    if (shouldAppendEvolution) setHighlightedTimelineId(`evo-${evolutionId}`);
+    setHighlightedToothNumber(toothNumber);
+
+    window.setTimeout(() => setHighlightedTreatmentId(null), 2200);
+    if (shouldAppendEvolution) window.setTimeout(() => setHighlightedTimelineId(null), 2200);
+    window.setTimeout(() => setHighlightedToothNumber(null), 2600);
+  };
+
+  const handleCompleteTreatment = async (treatment: any) => {
+    const nowIso = new Date().toISOString();
+    const evolutionId = `evo-complete-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const nextTreatmentPlan = (patient.treatmentPlan || []).map((item: any) =>
+      item.id === treatment.id
+        ? { ...item, status: 'REALIZADO', completed_at: nowIso, updated_at: nowIso }
+        : item
+    );
+
+    const evolutionEntry = {
+      id: evolutionId,
+      date: nowIso,
+      notes: `Procedimento concluído no dente ${treatment.tooth_number || '-'}: ${treatment.procedure}.`,
+      procedure_performed: `Conclusão - ${treatment.procedure}`,
+      procedure: `Conclusão - ${treatment.procedure}`,
+      event_type: 'PROCEDURE_COMPLETION',
+    };
+
+    setOptimisticTreatments((prev) => [
+      { ...treatment, status: 'REALIZADO', completed_at: nowIso, updated_at: nowIso },
+      ...prev.filter((item: any) => item.id !== treatment.id),
+    ]);
+    setOptimisticEvolutions((prev) => [evolutionEntry, ...prev]);
+
+    const updatedPatient = {
+      ...patient,
+      treatmentPlan: nextTreatmentPlan,
+      evolution: [evolutionEntry, ...(patient.evolution || [])],
+    };
+
+    try {
+      await onUpdatePatient(updatedPatient);
+    } catch (error) {
+      console.error('Error completing treatment:', error);
+    }
+
+    setSelectedTreatmentAction(null);
+    setHighlightedTimelineId(`evo-${evolutionId}`);
+    window.setTimeout(() => setHighlightedTimelineId(null), 2200);
+  };
+
+  const handleConvertTreatment = async (treatment: any, nextProcedure: string) => {
+    const nowIso = new Date().toISOString();
+    const evolutionId = `evo-convert-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const nextTreatmentPlan = (patient.treatmentPlan || []).map((item: any) =>
+      item.id === treatment.id
+        ? {
+            ...item,
+            procedure: nextProcedure,
+            status: 'APROVADO',
+            value: Number(item.value) || 0,
+            updated_at: nowIso,
+          }
+        : item
+    );
+
+    const evolutionEntry = {
+      id: evolutionId,
+      date: nowIso,
+      notes: `Plano ajustado no dente ${treatment.tooth_number || '-'}: ${treatment.procedure} convertido para ${nextProcedure}.`,
+      procedure_performed: `Conversão de plano`,
+      procedure: `Conversão - ${treatment.procedure} -> ${nextProcedure}`,
+      event_type: 'PLAN_CHANGE',
+    };
+
+    setOptimisticTreatments((prev) => [
+      { ...treatment, procedure: nextProcedure, status: 'APROVADO', updated_at: nowIso },
+      ...prev.filter((item: any) => item.id !== treatment.id),
+    ]);
+    setOptimisticEvolutions((prev) => [evolutionEntry, ...prev]);
+
+    const updatedPatient = {
+      ...patient,
+      treatmentPlan: nextTreatmentPlan,
+      evolution: [evolutionEntry, ...(patient.evolution || [])],
+    };
+
+    try {
+      await onUpdatePatient(updatedPatient);
+    } catch (error) {
+      console.error('Error converting treatment:', error);
+    }
+
+    setSelectedTreatmentAction(null);
+    setHighlightedTreatmentId(treatment.id);
+    setHighlightedTimelineId(`evo-${evolutionId}`);
+    if (Number.isFinite(Number(treatment.tooth_number))) {
+      setHighlightedToothNumber(Number(treatment.tooth_number));
+      window.setTimeout(() => setHighlightedToothNumber(null), 2600);
+    }
+    window.setTimeout(() => setHighlightedTreatmentId(null), 2200);
+    window.setTimeout(() => setHighlightedTimelineId(null), 2200);
   };
 
   const patientFiles = patient?.files || [];
@@ -229,6 +540,32 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       odontogramRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
+
+  const activeToothNumbers = useMemo(
+    () =>
+      treatmentInProgress
+        .map((item: any) => Number(item.tooth_number))
+        .filter((toothNumber: number) => Number.isFinite(toothNumber) && toothNumber > 0),
+    [treatmentInProgress]
+  );
+
+  const priorityToothNumber = useMemo(() => {
+    const first = treatmentInProgress[0];
+    const toothNumber = Number(first?.tooth_number);
+    return Number.isFinite(toothNumber) && toothNumber > 0 ? toothNumber : null;
+  }, [treatmentInProgress]);
+
+  const globalCareState = useMemo<GlobalCareState>(() => {
+    const hasUrgent = treatmentInProgress.some((item: any) => {
+      const status = String(item.status || '').toUpperCase();
+      return status === 'PENDENTE';
+    });
+    if (hasUrgent) return 'URGENTE';
+    if (treatmentInProgress.length > 0 || clinicalStatus === 'EM_TRATAMENTO') return 'EM_TRATAMENTO';
+    return 'ESTAVEL';
+  }, [treatmentInProgress, clinicalStatus]);
+
+  const globalCare = globalStateConfig[globalCareState];
 
   const iosCard =
     'bg-white border border-slate-200/80 shadow-[0_14px_38px_rgba(15,23,42,0.08),0_2px_10px_rgba(15,23,42,0.04)]';
@@ -312,6 +649,16 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
               </button>
             </div>
           </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">Estado global do paciente</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <span className={`inline-flex w-fit rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.08em] ${globalCare.tone}`}>
+                {globalCare.label}
+              </span>
+              <p className="text-xs text-slate-600">{globalCare.helper}</p>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -327,40 +674,57 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
           <div className="rounded-[28px] p-1.5 sm:p-2 bg-white/80 ring-1 ring-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
             <Odontogram
-              data={patient?.odontogram || {}}
-              onToothClick={(tooth) => {
-                setSelectedTooth(tooth);
-                setIsOdontoModalOpen(true);
-              }}
+              data={mergedOdontogram}
+              onChange={handleOdontogramStatusChange}
+              onSelectProcedure={handleOdontoProcedureSelect}
+              treatments={treatmentInProgress}
+              activeToothNumbers={activeToothNumbers}
+              priorityToothNumber={priorityToothNumber}
+              highlightedToothNumber={highlightedToothNumber}
             />
           </div>
         </section>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1.7fr_1fr] gap-6">
           <div className="space-y-6">
-            <section className={`${iosCard} rounded-[28px] p-6 sm:p-7`}>
+            <section className="rounded-[30px] border border-primary/25 bg-gradient-to-br from-white via-white to-primary/5 p-7 sm:p-8 shadow-[0_24px_55px_rgba(12,155,114,0.16),0_10px_30px_rgba(15,23,42,0.08)]">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg sm:text-xl font-bold tracking-[-0.01em] text-slate-950">Tratamento atual</h3>
-                <span className="text-xs text-slate-500 font-semibold">Prioridade clínica</span>
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-extrabold tracking-[-0.02em] text-slate-950">Tratamento atual</h3>
+                  <p className="text-xs text-slate-600 mt-0.5">Próximo passo clínico do paciente</p>
+                </div>
+                <span className="text-xs text-primary font-extrabold uppercase tracking-[0.12em]">Foco principal</span>
               </div>
 
               <div className="space-y-3">
                 {treatmentInProgress.length > 0 ? (
-                  treatmentInProgress.map((item: any) => {
+                  treatmentInProgress.map((item: any, idx: number) => {
+                    const isPriority = idx === 0;
                     const rawStatus = String(item.status || '').toUpperCase();
                     const itemBadge =
                       rawStatus === 'APROVADO'
-                        ? 'bg-emerald-100 text-emerald-800'
+                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
                         : rawStatus === 'PENDENTE'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-sky-100 text-sky-800';
+                          ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                          : 'bg-indigo-100 text-indigo-900 border border-indigo-200';
 
                     return (
                       <div
                         key={item.id}
-                        className={`rounded-2xl px-4 py-4 flex items-center justify-between gap-3 transition-all duration-200 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)] ${iosSubtleCard}`}
+                        className={`rounded-2xl px-4 py-4 flex items-center justify-between gap-3 transition-all duration-300 ${
+                          isPriority
+                            ? 'border border-primary/35 bg-gradient-to-br from-white to-primary/5 shadow-[0_20px_40px_rgba(12,155,114,0.16),0_6px_18px_rgba(15,23,42,0.08)]'
+                            : `${iosSubtleCard} hover:border-slate-300`
+                        } ${
+                          highlightedTreatmentId === item.id
+                            ? 'ring-2 ring-primary/40 bg-primary/5 shadow-[0_20px_36px_rgba(12,155,114,0.18)]'
+                            : ''
+                        }`}
                       >
                         <div className="min-w-0">
+                          {isPriority && (
+                            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary mb-1">Próximo passo</p>
+                          )}
                           <p className="font-semibold text-slate-900 text-[15px] sm:text-base leading-6 truncate">
                             {item.procedure} {item.tooth_number ? `dente ${item.tooth_number}` : ''}
                           </p>
@@ -375,8 +739,12 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                         </div>
 
                         <button
-                          onClick={() => setIsAddingEvolution(true)}
-                          className="shrink-0 px-3 py-2 rounded-xl bg-white text-primary text-xs font-extrabold border border-slate-200 hover:bg-primary hover:text-white hover:shadow-[0_10px_20px_rgba(12,155,114,0.20)] hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
+                          onClick={() => setSelectedTreatmentAction(item)}
+                          className={`shrink-0 px-3 py-2 rounded-xl text-xs font-extrabold transition-all duration-200 active:scale-[0.98] ${
+                            isPriority
+                              ? 'bg-primary text-white border border-primary hover:opacity-95 hover:shadow-[0_10px_20px_rgba(12,155,114,0.24)] hover:scale-[1.01]'
+                              : 'bg-white text-slate-700 border border-slate-300 hover:border-slate-400 hover:bg-slate-50 hover:scale-[1.01]'
+                          }`}
                         >
                           Continuar
                         </button>
@@ -403,12 +771,12 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
               </div>
             </section>
 
-            <section className={`${iosCard} rounded-[28px] p-6 sm:p-7`}>
+            <section className="rounded-[24px] border border-slate-200 bg-white p-4 sm:p-5 shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg sm:text-xl font-bold tracking-[-0.01em] text-slate-950">Evolução clínica</h3>
+                <h3 className="text-base sm:text-lg font-bold tracking-[-0.01em] text-slate-900">Evolução clínica</h3>
                 <button
                   onClick={() => setIsAddingEvolution(true)}
-                  className="text-sm font-bold text-primary hover:underline hover:scale-[1.01] transition-all duration-200"
+                  className="text-xs font-bold text-slate-600 hover:text-slate-800 hover:underline transition-all duration-200"
                 >
                   Nova evolução
                 </button>
@@ -418,16 +786,33 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                 {timelineItems.length > 0 && <div className="absolute left-[18px] top-1 bottom-1 w-[2px] rounded-full bg-gradient-to-b from-primary/80 via-primary/35 to-slate-200" />}
                 {timelineItems.length > 0 ? (
                   <>
+                    <AnimatePresence initial={false}>
                     {(showAllEvolutions ? timelineItems : timelineItems.slice(0, 3)).map((item: any, idx: number) => {
                     const Icon = resolveTimelineIcon(item.title);
                     const statusPill =
                       item.status === 'EM_ANDAMENTO'
                         ? 'bg-amber-100 text-amber-800'
-                        : 'bg-emerald-100 text-emerald-800';
+                        : item.status === 'OBSERVACAO'
+                          ? 'bg-slate-100 text-slate-700'
+                          : 'bg-emerald-100 text-emerald-800';
                     const isLatest = idx === 0;
+                    const isNewlyAdded = highlightedTimelineId === item.id;
 
                       return (
-                        <div key={item.id} className={`rounded-2xl p-4 ml-8 transition-all duration-200 ${isLatest ? 'bg-white border border-primary/25 shadow-[0_18px_34px_rgba(15,23,42,0.10),0_6px_18px_rgba(12,155,114,0.10)]' : 'bg-slate-50/75 border border-slate-200/70 opacity-75 hover:opacity-95'}`}>
+                        <motion.div
+                          key={item.id}
+                          layout
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, ease: 'easeOut' }}
+                          className={`rounded-xl p-3 ml-8 transition-all duration-300 ${
+                            isNewlyAdded
+                              ? 'bg-primary/5 border border-primary/40 ring-2 ring-primary/25 shadow-[0_18px_34px_rgba(12,155,114,0.20)]'
+                              : isLatest
+                                ? 'bg-white border border-primary/20 shadow-[0_12px_24px_rgba(15,23,42,0.08)]'
+                                : 'bg-slate-50/70 border border-slate-200/70 opacity-80 hover:opacity-95'
+                          }`}
+                        >
                           <span className={`absolute left-[12px] mt-3 w-[13px] h-[13px] rounded-full border-2 shadow-sm ${isLatest ? 'bg-primary border-white ring-4 ring-primary/12' : 'bg-white border-slate-400'}`} />
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex gap-3 min-w-0">
@@ -436,19 +821,20 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                               </div>
                               <div className="min-w-0">
                                 {isLatest && <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary mb-1">Último evento</p>}
-                                <p className={`leading-6 truncate ${isLatest ? 'text-base font-bold text-slate-950' : 'text-[15px] font-semibold text-slate-800'}`}>{item.title}</p>
-                                {item.notes && <p className={`text-sm leading-6 mt-0.5 line-clamp-2 ${isLatest ? 'text-slate-700' : 'text-slate-500'}`}>{item.notes}</p>}
-                                <p className={`text-xs mt-1.5 ${isLatest ? 'text-slate-600' : 'text-slate-500'}`}>{formatDate(item.date)}</p>
+                                <p className={`leading-5 truncate ${isLatest ? 'text-[15px] font-bold text-slate-950' : 'text-sm font-semibold text-slate-800'}`}>{item.title}</p>
+                                {item.notes && <p className={`text-xs leading-5 mt-0.5 line-clamp-2 ${isLatest ? 'text-slate-700' : 'text-slate-500'}`}>{item.notes}</p>}
+                                <p className={`text-[11px] mt-1 ${isLatest ? 'text-slate-600' : 'text-slate-500'}`}>{formatDate(item.date)}</p>
                               </div>
                             </div>
 
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusPill}`}>
-                              {item.status === 'EM_ANDAMENTO' ? 'Em andamento' : 'Concluído'}
+                              {item.status === 'EM_ANDAMENTO' ? 'Em andamento' : item.status === 'OBSERVACAO' ? 'Observação' : 'Concluído'}
                             </span>
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
+                    </AnimatePresence>
 
                     {timelineItems.length > 3 && (
                       <div className="pt-1">
@@ -598,34 +984,55 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
         </div>
       )}
 
-      {isOdontoModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/30 z-[210] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-md p-8 rounded-[30px] border border-slate-200 shadow-[0_28px_70px_rgba(15,23,42,0.20)]">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold tracking-tight text-slate-900">Dente {selectedTooth}</h3>
-              <button
-                onClick={() => setIsOdontoModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-                aria-label="Fechar seleção de dente"
-              >
-                <XCircle size={22} />
-              </button>
+      {selectedTreatmentAction && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-900/30 p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_28px_70px_rgba(15,23,42,0.20)]">
+            <div className="mb-4">
+              <h3 className="text-lg font-bold text-slate-900">Continuar tratamento</h3>
+              <p className="text-sm text-slate-600">
+                {selectedTreatmentAction.procedure} {selectedTreatmentAction.tooth_number ? `- dente ${selectedTreatmentAction.tooth_number}` : ''}
+              </p>
             </div>
-            <div className="grid grid-cols-1 gap-2">
-              {['Restauração', 'Endodontia', 'Coroa', 'Implante', 'Extração'].map((proc) => (
-                <button
-                  key={proc}
-                  onClick={() => handleOdontoProcedureSelect(proc)}
-                  className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-primary/10 hover:scale-[1.01] transition-all duration-200 group active:scale-[0.98]"
-                >
-                  <span className="font-bold text-slate-800 group-hover:text-primary">{proc}</span>
-                  <ArrowRight size={18} className="text-slate-400 group-hover:text-primary" />
-                </button>
-              ))}
+
+            <div className="space-y-3">
+              <button
+                onClick={() => handleCompleteTreatment(selectedTreatmentAction)}
+                className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left transition-colors hover:bg-emerald-100"
+              >
+                <p className="text-sm font-bold text-emerald-900">Concluir procedimento atual</p>
+                <p className="text-xs text-emerald-700">Move para execução concluída e registra na evolução clínica.</p>
+              </button>
+
+              <div className="rounded-xl border border-slate-200 p-3">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Converter para outro procedimento</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Restauracao', 'Canal', 'Extracao', 'Coroa']
+                    .filter((proc) => proc !== selectedTreatmentAction.procedure)
+                    .map((proc) => (
+                      <button
+                        key={proc}
+                        onClick={() => handleConvertTreatment(selectedTreatmentAction, proc)}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-white"
+                      >
+                        {proc}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setSelectedTreatmentAction(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 };
