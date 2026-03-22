@@ -37,7 +37,8 @@ import {
   X,
   List,
   Activity,
-  Check
+  Check,
+  CalendarDays
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Odontogram } from './components/Odontogram';
@@ -206,10 +207,10 @@ const SidebarItem = ({ id, icon: Icon, label, activeTab, setActiveTab, setIsSide
       setIsSidebarOpen(false);
       navigate('/');
     }}
-    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-full transition-all duration-200 ${
       activeTab === id 
-        ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+        ? 'bg-white text-primary shadow-sm' 
+        : 'text-slate-500 hover:text-slate-900'
     }`}
   >
     <Icon size={20} className="shrink-0" />
@@ -510,6 +511,7 @@ export default function App() {
   const [newImage, setNewImage] = useState<{ url: string, description: string, file: File | null }>({ url: '', description: '', file: null });
   const [newAppointment, setNewAppointment] = useState({
     patient_id: '',
+    patient_name: '',
     dentist_id: '',
     date: '',
     time: '',
@@ -1769,7 +1771,7 @@ export default function App() {
       const res = await apiFetch(`/api/patients/${id}`);
       const data = await res.json();
       setSelectedPatient(data);
-      setActiveTab('prontuario');
+      navigate(`/pacientes/${id}/clinico`);
     } catch (error) {
       console.error('Error fetching patient record:', error);
     }
@@ -2418,7 +2420,7 @@ export default function App() {
               <div className="flex flex-col gap-14 pb-32 pt-10 px-2 max-w-screen-xl mx-auto w-full">
                 {/* Clean Header */}
                 <div className="flex flex-col gap-4 mb-6 no-print">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Agenda</h2>
                       <span className="text-sm font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
@@ -2427,10 +2429,10 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => setIsModalOpen(true)}
-                      className="bg-primary text-white px-6 py-3 rounded-full font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-all shadow-lg shadow-primary/10 active:scale-95 text-sm"
+                      className="p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-100"
+                      title="Nova consulta"
                     >
-                      <Plus size={18} strokeWidth={3} />
-                      Nova Consulta
+                      <Plus size={18} strokeWidth={2.5} />
                     </button>
                   </div>
 
@@ -2483,10 +2485,8 @@ export default function App() {
                   <div className="divide-y divide-slate-100">
                     {(() => {
                       const getFilteredAppointments = () => {
-                        // For day view, include FINISHED status to show completed appointments
-                        const effectiveStatusFilter = agendaViewMode === 'day' 
-                          ? [...statusFilter, 'FINISHED'].filter((v, i, a) => a.indexOf(v) === i) // Remove duplicates
-                          : statusFilter;
+                        // Always include FINISHED so completed appointments remain visible across day/week/month views.
+                        const effectiveStatusFilter = [...statusFilter, 'FINISHED'].filter((v, i, a) => a.indexOf(v) === i);
                         
                         let filtered = appointments.filter(a => effectiveStatusFilter.length === 0 || effectiveStatusFilter.includes(a.status))
                           .filter(a => agendaSearchTerm === '' || (a.patient_name || '').toLowerCase().includes((agendaSearchTerm || '').toLowerCase()));
@@ -2494,10 +2494,8 @@ export default function App() {
                         if (agendaViewMode === 'day') {
                           filtered = filtered.filter(a => {
                             const appDate = new Date(a.start_time);
-                            const isSelectedDate = appDate.toDateString() === selectedDate.toDateString();
-                            const isFinishedPast = a.status === 'FINISHED' && appDate < new Date() && !isSelectedDate;
-                            // Include appointments from selected date OR finished appointments from the past (not the selected date)
-                            return isSelectedDate || isFinishedPast;
+                            // Only include appointments from the selected date
+                            return appDate.toDateString() === selectedDate.toDateString();
                           });
                         } else if (agendaViewMode === 'week') {
                           const startOfWeek = new Date(selectedDate);
@@ -2591,7 +2589,6 @@ export default function App() {
                                   onClick={() => {
                                     const patient = patients.find(p => p.id === app.patient_id);
                                     if (patient) openPatientRecord(patient.id);
-                                    setActiveTab('prontuario');
                                     navigate(`/pacientes/${app.patient_id}/clinico`);
                                   }}
                                   className="flex-1 sm:flex-none bg-primary text-white px-4 py-2.5 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all active:scale-95"
@@ -2776,7 +2773,132 @@ export default function App() {
 
                         return (
                           <div className="space-y-4">
-                            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-2">
+                            {/* Mobile: Day-selector strip + appointment list */}
+                            <div className="block sm:hidden space-y-4">
+                              {/* 7-day horizontal strip */}
+                              <div className="grid grid-cols-7 gap-1">
+                                {weekDays.map((day, idx) => {
+                                  const isToday = day.toDateString() === new Date().toDateString();
+                                  const isSelected = selectedWeekDay === idx;
+                                  const hasDayApps = filtered.some(a =>
+                                    new Date(a.start_time).toDateString() === day.toDateString()
+                                  );
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={() => setSelectedWeekDay(idx)}
+                                      className={`flex flex-col items-center py-2 px-1 rounded-xl transition-all ${
+                                        isSelected
+                                          ? 'bg-primary text-white shadow-sm'
+                                          : isToday
+                                          ? 'bg-primary/10 text-primary'
+                                          : 'bg-slate-50 text-slate-600'
+                                      }`}
+                                    >
+                                      <span className="text-[10px] font-semibold uppercase tracking-wide">{dayLabels[idx].slice(0, 1)}</span>
+                                      <span className={`text-base font-bold leading-tight mt-0.5 ${isSelected ? 'text-white' : isToday ? 'text-primary' : 'text-slate-900'}`}>
+                                        {day.getDate()}
+                                      </span>
+                                      {hasDayApps && (
+                                        <div className={`w-1.5 h-1.5 rounded-full mt-1 ${isSelected ? 'bg-white/70' : 'bg-primary'}`} />
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Appointment list for selected day */}
+                              {(() => {
+                                const selectedDay = weekDays[selectedWeekDay];
+                                const dayApps = filtered
+                                  .filter(a => selectedDay && new Date(a.start_time).toDateString() === selectedDay.toDateString())
+                                  .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                                const bestSlot = weekBestSlots[selectedWeekDay];
+
+                                if (dayApps.length === 0) {
+                                  return (
+                                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-8 text-center space-y-3">
+                                      <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                                        <CalendarDays size={24} className="text-slate-300" />
+                                      </div>
+                                      <p className="text-sm text-slate-400 font-medium">Nenhum agendamento neste dia</p>
+                                      {bestSlot && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setWeekSuggestionSheet({
+                                            date: selectedDay,
+                                            start: bestSlot.start,
+                                            end: bestSlot.end,
+                                            duration: bestSlot.duration,
+                                            procedure: getSuggestion(bestSlot.duration)
+                                          })}
+                                          className="text-xs font-bold text-primary flex items-center gap-1 mx-auto hover:underline"
+                                        >
+                                          💡 Ver horário disponível ({bestSlot.start}–{bestSlot.end})
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                                    {bestSlot && (
+                                      <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-center justify-between">
+                                        <span className="text-xs text-amber-700">💡 Horário livre: {bestSlot.start}–{bestSlot.end}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setWeekSuggestionSheet({
+                                            date: selectedDay,
+                                            start: bestSlot.start,
+                                            end: bestSlot.end,
+                                            duration: bestSlot.duration,
+                                            procedure: getSuggestion(bestSlot.duration)
+                                          })}
+                                          className="text-xs font-bold text-amber-700 hover:underline"
+                                        >
+                                          Agendar
+                                        </button>
+                                      </div>
+                                    )}
+                                    <div className="divide-y divide-slate-100">
+                                      {dayApps.map(app => {
+                                        const colors = app.status === 'FINISHED' 
+                                          ? { bg: '#cbd5e1', hover: '#a1a5ab' } 
+                                          : getProcedureColor(app.notes || '');
+                                        const time = new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                                        return (
+                                          <button
+                                            key={app.id}
+                                            type="button"
+                                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+                                            onClick={() => setWeekSheetSelectedAppointment(app)}
+                                          >
+                                            <div
+                                              className="w-1 self-stretch rounded-full shrink-0"
+                                              style={{ backgroundColor: colors.bg }}
+                                            />
+                                            <div className="w-12 shrink-0 text-center">
+                                              <span className="text-sm font-bold text-slate-900">{time}</span>
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                              <p className="text-sm font-semibold text-slate-900 truncate">{app.patient_name}</p>
+                                              <p className="text-xs text-slate-400 truncate">{app.notes || 'Consulta'}</p>
+                                            </div>
+                                            <ChevronRight size={16} className="text-slate-300 shrink-0" />
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+
+                            {/* Desktop: Full time-grid view */}
+                            <div className="hidden sm:block overflow-x-auto pb-2">
                               <div className="min-w-[760px] space-y-4">
                                 {/* Week header with day names and dates */}
                                 <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10">
@@ -2862,7 +2984,10 @@ export default function App() {
                                             <div className="space-y-1">
                                               {dayAppointments.slice(0, 3).map(app => {
                                                 const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
-                                                const colors = getProcedureColor(app.notes || '');
+                                                const colors = app.status === 'FINISHED'
+                                                  ? { bg: '#e2e8f0', hover: '#cbd5e1' }
+                                                  : getProcedureColor(app.notes || '');
+                                                const textColor = app.status === 'FINISHED' ? 'text-slate-600' : 'text-white';
                                                 return (
                                                   <div
                                                     key={app.id}
@@ -2871,7 +2996,7 @@ export default function App() {
                                                     }}
                                                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
                                                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
-                                                    className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                    className={`${textColor} rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden`}
                                                     title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
                                                     onClick={() => setWeekSheetSelectedAppointment(app)}
                                                   >
@@ -3006,7 +3131,6 @@ export default function App() {
                                           onClick={() => {
                                             const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
                                             if (patient) openPatientRecord(patient.id);
-                                            setActiveTab('prontuario');
                                             navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
                                             setWeekSheetSelectedAppointment(null);
                                           }}
@@ -3161,7 +3285,10 @@ export default function App() {
                                           <div className="space-y-1">
                                             {dayAppointments.slice(0, 3).map(app => {
                                               const firstName = (app.patient_name || '').split(' ')[0] || app.patient_name;
-                                              const colors = getProcedureColor(app.notes || '');
+                                              const colors = app.status === 'FINISHED'
+                                                ? { bg: '#e2e8f0', hover: '#cbd5e1' }
+                                                : getProcedureColor(app.notes || '');
+                                              const textColor = app.status === 'FINISHED' ? 'text-slate-600' : 'text-white';
                                               return (
                                                 <div
                                                   key={app.id}
@@ -3170,7 +3297,7 @@ export default function App() {
                                                   }}
                                                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.hover}
                                                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = colors.bg}
-                                                  className="text-white rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden"
+                                                  className={`${textColor} rounded text-[8px] px-1 py-0.5 font-medium cursor-pointer transition-colors min-h-6 flex flex-col justify-center overflow-hidden`}
                                                   title={`${app.patient_name} - ${new Date(app.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
                                                   onClick={() => setWeekSheetSelectedAppointment(app)}
                                                 >
@@ -3304,7 +3431,6 @@ export default function App() {
                                           onClick={() => {
                                             const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
                                             if (patient) openPatientRecord(patient.id);
-                                            setActiveTab('prontuario');
                                             navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
                                             setWeekSheetSelectedAppointment(null);
                                           }}
@@ -3544,7 +3670,6 @@ export default function App() {
                                                   onClick={() => {
                                                     const patient = patients.find(p => p.id === app.patient_id);
                                                     if (patient) openPatientRecord(patient.id);
-                                                    setActiveTab('prontuario');
                                                     navigate(`/pacientes/${app.patient_id}/clinico`);
                                                     setMonthSheetSelectedDay(null);
                                                   }}
@@ -3635,18 +3760,24 @@ export default function App() {
                       }
 
                       // Day view - Group by time periods
+                      const _now = new Date();
+
+                      // Finished appointments from the selected day that already happened — shown in "Consultas Anteriores Realizadas"
+                      const pastFinishedAppointments = filtered.filter(a => {
+                        const appDate = new Date(a.start_time);
+                        return a.status === 'FINISHED' && appDate <= _now && appDate.toDateString() === selectedDate.toDateString();
+                      }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+
+                      // Remaining appointments (exclude ones already shown above to avoid duplication)
                       const todayAppointments = filtered.filter(a => {
                         const appDate = new Date(a.start_time);
-                        return appDate.toDateString() === selectedDate.toDateString();
+                        if (appDate.toDateString() !== selectedDate.toDateString()) return false;
+                        if (a.status === 'FINISHED' && appDate <= _now) return false;
+                        return true;
                       });
 
                       // Calculate free slots for suggestions
                       const freeSlots = getFreeSlots(todayAppointments);
-
-                      const pastFinishedAppointments = filtered.filter(a => {
-                        const appDate = new Date(a.start_time);
-                        return a.status === 'FINISHED' && appDate < new Date() && appDate.toDateString() !== selectedDate.toDateString();
-                      }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()); // Most recent first
 
                       const morning = todayAppointments.filter(a => {
                         const hour = new Date(a.start_time).getHours();
@@ -3873,9 +4004,9 @@ export default function App() {
                   return (
                     <>
                       {/* ── Header ── */}
-                      <div className="space-y-2 mb-1">
-                        <h3 className="text-[24px] font-bold tracking-tight text-[#1C1C1E]">Pacientes</h3>
-                        <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-4 mb-2">
+                        <h3 className="text-2xl font-bold tracking-tight text-slate-900">Pacientes</h3>
+                        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-full">
                           <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                             <input
@@ -3883,16 +4014,16 @@ export default function App() {
                               placeholder="Buscar paciente..."
                               value={searchTerm}
                               onChange={(e) => setSearchTerm(e.target.value)}
-                              className="w-full h-9 pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-300 focus:border-slate-300 transition-all text-sm"
+                              className="w-full h-10 pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-full focus:outline-none focus:ring-1 focus:ring-slate-300 focus:border-slate-300 transition-all text-sm"
                             />
                           </div>
                           <button
                             type="button"
                             onClick={() => setIsPatientModalOpen(true)}
-                            aria-label="Novo paciente"
-                            className="w-9 h-9 shrink-0 flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/80 transition-colors"
+                            className="p-2 text-slate-400 hover:text-slate-600 transition-colors rounded-full hover:bg-slate-200/50"
+                            title="Novo paciente"
                           >
-                            <Plus size={18} />
+                            <Plus size={18} strokeWidth={2.5} />
                           </button>
                         </div>
                       </div>
@@ -3958,16 +4089,16 @@ export default function App() {
                       )}
 
                       {/* ── Filter chips ── */}
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 bg-slate-100 p-1 rounded-2xl">
                         {filterChips.map(chip => (
                           <button
                             key={chip.key}
                             type="button"
                             onClick={() => setPatientListFilter(chip.key)}
-                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-all flex items-center gap-1.5 ${
                               patientListFilter === chip.key
-                                ? 'bg-primary text-white'
-                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                                ? 'bg-white shadow-sm text-primary'
+                                : 'text-slate-500 hover:text-slate-700'
                             }`}
                           >
                             {chip.label}
@@ -4073,20 +4204,20 @@ export default function App() {
 
             {activeTab === 'prontuario' && selectedPatient && (
               <div className="space-y-8 pt-10">
-                <div className="space-y-1.5 mb-6">
+                <div className="space-y-1.5 mb-4">
                   <h3 className="text-[28px] font-bold tracking-tight text-[#1C1C1E] truncate">Prontuário: {selectedPatient.name}</h3>
                   <p className="text-[17px] font-medium text-[#8E8E93]">Linha clínica e decisões do paciente</p>
                 </div>
 
-                <div className="flex items-center gap-3 md:gap-4">
+                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-full w-fit">
                   <button 
                     onClick={() => setActiveTab('pacientes')}
-                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                    className="p-2 bg-white shadow-sm rounded-full text-slate-500 hover:text-slate-700 transition-colors"
                   >
                     <ChevronRight size={20} className="rotate-180 md:hidden" />
                     <ChevronRight size={24} className="rotate-180 hidden md:block" />
                   </button>
-                  <span className="text-sm font-medium text-slate-500">Voltar para pacientes</span>
+                  <span className="text-sm font-medium text-slate-500 pr-3">Voltar para pacientes</span>
                 </div>
 
                 {(() => {
@@ -4116,21 +4247,21 @@ export default function App() {
                 })()}
 
                 <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
-                  <div className="flex flex-col sm:flex-row gap-2.5">
+                  <div className="flex flex-col sm:flex-row gap-2.5 bg-slate-100 p-1 rounded-2xl">
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedPatientTab('evolucao');
                         setIsEvolutionFormOpen(true);
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition-colors w-full sm:w-auto"
+                      className="px-4 py-2.5 rounded-full bg-white shadow-sm text-primary text-sm font-semibold hover:opacity-90 transition-colors w-full sm:w-auto"
                     >
                       Nova evolução
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowTreatmentPlanSummary(true)}
-                      className="px-4 py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors w-full sm:w-auto"
+                      className="px-4 py-2.5 rounded-full text-slate-600 text-sm font-semibold hover:text-slate-800 transition-colors w-full sm:w-auto"
                     >
                       Ver plano de tratamento
                     </button>
@@ -4267,20 +4398,22 @@ export default function App() {
                   <div className="lg:col-span-2 space-y-8 order-1 lg:order-1">
                     {/* Tabs for Patient Record */}
                     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="flex border-b border-slate-100">
-                        {['evolucao', 'imagens', 'financeiro'].map((tab) => (
-                          <button
-                            key={tab}
-                            onClick={() => setSelectedPatientTab(tab as any)}
-                            className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
-                              selectedPatientTab === tab 
-                                ? 'border-primary text-primary bg-primary/5' 
-                                : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
-                            }`}
-                          >
-                            {tab === 'evolucao' ? 'Evolução Clínica' : tab === 'imagens' ? 'Imagens & RX' : 'Financeiro'}
-                          </button>
-                        ))}
+                      <div className="px-4 pt-4 pb-3 border-b border-slate-100">
+                        <div className="flex bg-slate-100 p-1 rounded-full w-fit max-w-full overflow-x-auto">
+                          {['evolucao', 'imagens', 'financeiro'].map((tab) => (
+                            <button
+                              key={tab}
+                              onClick={() => setSelectedPatientTab(tab as any)}
+                              className={`px-5 py-2 text-sm font-bold rounded-full transition-all whitespace-nowrap ${
+                                selectedPatientTab === tab
+                                  ? 'bg-white shadow-sm text-primary'
+                                  : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                            >
+                              {tab === 'evolucao' ? 'Evolução Clínica' : tab === 'imagens' ? 'Imagens & RX' : 'Financeiro'}
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
                       <div className="p-6">
@@ -4379,7 +4512,7 @@ export default function App() {
                                   return acc;
                                 }, {} as Record<string, typeof evolutionEntries>);
 
-                                return Object.entries(groups).map(([groupLabel, entries]) => (
+                                return Object.entries(groups).map(([groupLabel, entries]: [string, typeof evolutionEntries]) => (
                                   <div key={groupLabel} className="space-y-2">
                                     <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">{groupLabel}</p>
                                     <div className="space-y-2">
@@ -4458,7 +4591,7 @@ export default function App() {
                             <div className="flex justify-between items-center">
                               <h4 className="font-bold text-slate-800 flex items-center gap-2">
                                 <DollarSign size={18} className="text-primary" />
-                                Histórico Financeiro do Paciente
+                                Financeiro do paciente
                               </h4>
                               <button 
                                 onClick={() => {
@@ -4468,7 +4601,7 @@ export default function App() {
                                 className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
                               >
                                 <Plus size={14} /> 
-                                Novo Plano de Pagamento
+                                Novo parcelamento
                               </button>
                             </div>
 
@@ -4655,34 +4788,36 @@ export default function App() {
             )}
             {activeTab === 'financeiro' && (
               <div className="space-y-6">
-                <div className="mb-8">
-                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Financeiro</h2>
-                  <p className="text-sm text-slate-500">Controle de transações e parcelamentos</p>
-                </div>
-                <div className="flex border-b border-slate-100 mb-6">
-                  {['transacoes', 'parcelamentos'].map((subTab) => (
-                    <button
-                      key={subTab}
-                      onClick={() => setFinanceSubTab(subTab as any)}
-                      className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
-                        financeSubTab === subTab 
-                          ? 'border-primary text-primary bg-primary/5' 
-                          : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      {subTab === 'transacoes' ? 'Transações' : 'Parcelamentos'}
-                    </button>
-                  ))}
+                <div className="mb-6 space-y-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Financeiro</h2>
+                    <p className="text-sm text-slate-500">Controle de transações e parcelamentos</p>
+                  </div>
+                  <div className="flex bg-slate-100 p-1 rounded-full w-fit">
+                    {['transacoes', 'parcelamentos'].map((subTab) => (
+                      <button
+                        key={subTab}
+                        onClick={() => setFinanceSubTab(subTab as any)}
+                        className={`px-5 py-2 text-sm font-bold rounded-full transition-all ${
+                          financeSubTab === subTab
+                            ? 'bg-white shadow-sm text-primary'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {subTab === 'transacoes' ? 'Transações' : 'Parcelamentos'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {financeSubTab === 'transacoes' ? (
                   <>
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                      <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto bg-slate-100 p-1 rounded-2xl">
                         <select 
                           value={financeFilter.period}
                           onChange={(e) => setFinanceFilter({...financeFilter, period: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="day">Hoje</option>
                           <option value="week">Últimos 7 dias</option>
@@ -4692,7 +4827,7 @@ export default function App() {
                         <select 
                           value={financeFilter.type}
                           onChange={(e) => setFinanceFilter({...financeFilter, type: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="all">Todos os Tipos</option>
                           <option value="INCOME">Receitas</option>
@@ -4701,7 +4836,7 @@ export default function App() {
                         <select 
                           value={financeFilter.category}
                           onChange={(e) => setFinanceFilter({...financeFilter, category: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
+                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
                         >
                           <option value="all">Todas Categorias</option>
                           <option value="Procedimentos">Procedimentos</option>
@@ -4717,7 +4852,7 @@ export default function App() {
                       <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                         <button 
                           onClick={() => imprimirDocumento('relatorio')}
-                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-full font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                         >
                           <Printer size={18} />
                           Relatório
@@ -4727,7 +4862,7 @@ export default function App() {
                             setExportType('finance');
                             setIsExportModalOpen(true);
                           }}
-                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-full font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                         >
                           <Download size={18} />
                           Exportar
@@ -4737,7 +4872,7 @@ export default function App() {
                             setTransactionType('EXPENSE');
                             setIsTransactionModalOpen(true);
                           }}
-                          className="flex-1 sm:flex-none bg-rose-50 text-rose-600 px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                          className="flex-1 sm:flex-none bg-rose-50 text-rose-600 px-6 py-2.5 rounded-full font-bold text-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                         >
                           <Plus size={18} />
                           Despesa
@@ -4992,7 +5127,7 @@ export default function App() {
                                           }
                                         }}
                                         className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors"
-                                        title="Receber Parcela"
+                                        title="Registrar recebimento"
                                       >
                                         <DollarSign size={16} />
                                       </button>
@@ -5527,7 +5662,7 @@ export default function App() {
       {/* Modal de Exportação */}
       <AnimatePresence>
         {isExportModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5539,12 +5674,12 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+              className="relative bg-white/85 backdrop-blur-2xl border border-white/30 w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="p-6 border-b border-slate-100/70 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                   <Download className="text-primary" size={24} />
-                  Exportar Dados
+                  Exportar relatório
                 </h3>
                 <button onClick={() => setIsExportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                   <Plus size={24} className="rotate-45" />
@@ -5566,7 +5701,7 @@ export default function App() {
                         type="date" 
                         value={exportFilters.startDate}
                         onChange={(e) => setExportFilters({...exportFilters, startDate: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -5577,7 +5712,7 @@ export default function App() {
                         type="date" 
                         value={exportFilters.endDate}
                         onChange={(e) => setExportFilters({...exportFilters, endDate: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                   </div>
@@ -5587,7 +5722,7 @@ export default function App() {
                     <select 
                       value={exportFilters.patientId}
                       onChange={(e) => setExportFilters({...exportFilters, patientId: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                     >
                       <option value="all">Todos os Pacientes</option>
                       {patients.map(p => (
@@ -5602,7 +5737,7 @@ export default function App() {
                       <select 
                         value={exportFilters.category}
                         onChange={(e) => setExportFilters({...exportFilters, category: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         <option value="all">Receitas + Despesas</option>
                         <option value="income">Apenas Receitas</option>
@@ -5615,16 +5750,16 @@ export default function App() {
                 <div className="flex gap-3 pt-4">
                   <button 
                     onClick={() => setIsExportModalOpen(false)}
-                    className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all"
+                    className="flex-1 py-3 rounded-full font-bold text-slate-500 hover:bg-slate-100/70 transition-all"
                   >
                     Cancelar
                   </button>
                   <button 
                     onClick={exportType === 'patients' ? exportPatients : exportFinance}
-                    className="flex-1 bg-primary text-white py-4 rounded-2xl font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="flex-1 bg-primary text-white py-3 rounded-full font-bold shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
                     <Download size={20} />
-                    Exportar Agora
+                    Exportar
                   </button>
                 </div>
               </div>
@@ -5633,10 +5768,10 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Modal de Novo Agendamento */}
+      {/* Modal de Novo Agendamento — iOS Premium Minimalista */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[999] flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5648,118 +5783,168 @@ export default function App() {
               className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-md rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 40 }}
+              className="relative bg-white/80 backdrop-blur-2xl w-full sm:max-w-sm rounded-t-[28px] sm:rounded-[24px] shadow-2xl overflow-hidden max-h-[90vh] sm:max-h-fit overflow-y-auto border border-white/20"
             >
-              <div className="p-4 md:p-6">
-                <div className="flex justify-between items-center mb-4 md:mb-6">
-                  <h3 className="text-lg md:text-xl font-bold text-slate-900">Novo Agendamento</h3>
-                  <button onClick={() => {
-                    setIsModalOpen(false);
-                    setSuggestedSlot(null);
-                  }} className="text-slate-400 hover:text-slate-600">
-                    <Plus size={24} className="rotate-45" />
+              {/* Minimal Header */}
+              <div className="px-5 pt-5 pb-3 border-b border-slate-100/50">
+                <div className="flex justify-between items-center gap-4">
+                  <h2 className="text-lg font-semibold text-slate-900">Agendar</h2>
+                  <button 
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setSuggestedSlot(null);
+                    }} 
+                    className="w-7 h-7 rounded-full hover:bg-slate-100/50 transition-colors flex items-center justify-center shrink-0"
+                  >
+                    <X size={16} className="text-slate-400" />
                   </button>
                 </div>
-
-                {suggestedSlot && (
-                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-xs font-bold text-blue-700 uppercase mb-1">💡 Sugestão do Sistema</p>
-                    <p className="text-sm text-blue-900">
-                      Horário: <span className="font-bold">{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span> • 
-                      Duração: <span className="font-bold">{Math.floor(suggestedSlot.duration)}min</span> • 
-                      Procedimento: <span className="font-bold">{suggestedSlot.procedure}</span>
-                    </p>
-                  </div>
-                )}
-
-                <form onSubmit={handleCreateAppointment} className="space-y-4">
-                  <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Paciente</label>
-                    <select 
-                      required
-                      value={newAppointment.patient_id}
-                      onChange={(e) => setNewAppointment({...newAppointment, patient_id: e.target.value})}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
-                    >
-                      <option value="">Selecione um paciente</option>
-                      {patients.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Data</label>
-                      <input 
-                        required
-                        type="date" 
-                        value={newAppointment.date}
-                        onChange={(e) => setNewAppointment({...newAppointment, date: e.target.value})}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Horário</label>
-                      <input 
-                        required
-                        type="time" 
-                        value={newAppointment.time}
-                        onChange={(e) => setNewAppointment({...newAppointment, time: e.target.value})}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Duração (minutos)</label>
-                    <input 
-                      required
-                      type="number" 
-                      min="1"
-                      value={newAppointment.duration}
-                      onChange={(e) => setNewAppointment({...newAppointment, duration: e.target.value})}
-                      placeholder="Ex: 30, 45, 60"
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-1.5 block">Procedimento</label>
-                    <input
-                      type="text"
-                      value={newAppointment.notes || ''}
-                      onChange={(e) => setNewAppointment({...newAppointment, notes: e.target.value})}
-                      placeholder="Ex: endo 11, canal 11, restauração 26"
-                      maxLength={80}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none text-sm"
-                    />
-                    <p className="mt-0.5 text-xs text-slate-400">Foque em um procedimento curto (ex: endo 11).</p>
-                  </div>
-
-                  <div className="flex gap-3 pt-2">
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setIsModalOpen(false);
-                        setSuggestedSlot(null);
-                      }}
-                      className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50 transition-all text-sm"
-                    >
-                      Cancelar
-                    </button>
-                    <button 
-                      type="submit"
-                      className="flex-1 px-4 py-2.5 bg-primary text-white font-bold rounded-lg shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95 text-sm"
-                    >
-                      Confirmar
-                    </button>
-                  </div>
-                </form>
               </div>
+
+              {/* Alert Suggestion - Super minimalista */}
+              {suggestedSlot && (
+                <div className="mx-4 mt-3 p-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[12px]">
+                  <p className="text-xs text-slate-600 font-medium">
+                    <strong>{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</strong> • <strong>{Math.floor(suggestedSlot.duration)}min</strong> • {suggestedSlot.procedure}
+                  </p>
+                </div>
+              )}
+
+              {/* Form - iOS Glass Style */}
+              <form onSubmit={handleCreateAppointment} className="p-4 sm:p-5 space-y-4">
+                
+                {/* SEÇÃO 1: Procedimento com sugestões pequenas */}
+                <div>
+                  {/* Sugestões rápidas - Pequenas pills */}
+                  <div className="flex gap-1.5 mb-2 flex-wrap">
+                    {[
+                      { label: 'Limpeza', duration: '30' },
+                      { label: 'Consulta', duration: '20' },
+                      { label: 'Endo', duration: '90' },
+                      { label: 'Restauração', duration: '60' },
+                    ].map(proc => (
+                      <button
+                        key={proc.label}
+                        type="button"
+                        onClick={() => {
+                          setNewAppointment({
+                            ...newAppointment, 
+                            notes: proc.label,
+                            duration: proc.duration
+                          });
+                        }}
+                        className={`px-2.5 py-1 rounded-full font-medium text-[11px] transition-all border ${
+                          proc.label === newAppointment.notes
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-slate-200/50 bg-slate-100/30 text-slate-600 hover:bg-slate-100/50'
+                        }`}
+                      >
+                        {proc.label}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {/* Input para procedimento customizado */}
+                  <input
+                    type="text"
+                    value={newAppointment.notes || ''}
+                    onChange={(e) => setNewAppointment({...newAppointment, notes: e.target.value})}
+                    placeholder="Procedimento..."
+                    maxLength={60}
+                    className="w-full px-3.5 py-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[12px] focus:ring-1 focus:ring-primary focus:border-primary outline-none text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all"
+                  />
+                </div>
+
+                {/* SEÇÃO 2: Paciente (Campo de busca minimalista) */}
+                <div>
+                  <input 
+                    required
+                    type="text"
+                    placeholder="Paciente..."
+                    value={newAppointment.patient_name || ''}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      setNewAppointment({...newAppointment, patient_name: name});
+                      const matched = patients.find(p => p.name.toLowerCase() === name.toLowerCase());
+                      if (matched) {
+                        setNewAppointment(prev => ({...prev, patient_id: matched.id.toString()}));
+                      }
+                    }}
+                    className="w-full px-3.5 py-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[12px] focus:ring-1 focus:ring-primary focus:border-primary outline-none text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all"
+                  />
+                  {newAppointment.patient_name && !newAppointment.patient_id && (
+                    <div className="mt-2 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[12px] max-h-40 overflow-y-auto shadow-lg">
+                      {patients.filter(p => p.name.toLowerCase().includes(newAppointment.patient_name?.toLowerCase() || '')).length > 0 ? (
+                        patients.filter(p => p.name.toLowerCase().includes(newAppointment.patient_name?.toLowerCase() || '')).map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              setNewAppointment({...newAppointment, patient_id: p.id.toString(), patient_name: p.name});
+                            }}
+                            className="w-full text-left px-3.5 py-2 hover:bg-slate-100/50 text-sm text-slate-700 font-medium border-b border-slate-100/30 last:border-b-0 transition-colors"
+                          >
+                            {p.name}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3.5 py-2.5 text-xs text-slate-400">Nenhum paciente</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* SEÇÃO 3: Data, Hora, Duração */}
+                <div className="grid grid-cols-3 gap-2">
+                  <input 
+                    required
+                    type="date" 
+                    value={newAppointment.date}
+                    onChange={(e) => setNewAppointment({...newAppointment, date: e.target.value})}
+                    className="w-full px-3 py-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[10px] focus:ring-1 focus:ring-primary outline-none text-xs font-medium text-slate-900 transition-all"
+                  />
+                  <input 
+                    required
+                    type="time" 
+                    value={newAppointment.time}
+                    onChange={(e) => setNewAppointment({...newAppointment, time: e.target.value})}
+                    className="w-full px-3 py-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[10px] focus:ring-1 focus:ring-primary outline-none text-xs font-medium text-slate-900 transition-all"
+                  />
+                  <input 
+                    required
+                    type="number" 
+                    min="1"
+                    value={newAppointment.duration}
+                    onChange={(e) => setNewAppointment({...newAppointment, duration: e.target.value})}
+                    placeholder="min"
+                    className="w-full px-3 py-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[10px] focus:ring-1 focus:ring-primary outline-none text-xs font-medium text-slate-900 placeholder:text-slate-400 transition-all"
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div className="flex gap-2 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setSuggestedSlot(null);
+                    }}
+                    className="flex-1 py-2.5 px-4 border border-slate-200/50 text-slate-700 font-medium rounded-[10px] hover:bg-slate-50/50 active:bg-slate-100/50 transition-all text-sm backdrop-blur-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={!newAppointment.patient_id || !newAppointment.date || !newAppointment.time}
+                    className="flex-1 py-2.5 px-4 bg-primary/90 hover:bg-primary text-white font-medium rounded-[10px] active:scale-95 transition-all text-sm shadow-lg shadow-primary/20 disabled:opacity-40 disabled:cursor-not-allowed backdrop-blur-sm"
+                  >
+                    Agendar
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
@@ -5767,7 +5952,7 @@ export default function App() {
       {/* Modal de Novo Paciente */}
       <AnimatePresence>
         {isPatientModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5779,94 +5964,101 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-lg rounded-2xl md:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="relative bg-white/85 backdrop-blur-2xl border border-white/30 w-full max-w-sm rounded-[24px] shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
             >
-              <div className="p-6 md:p-8">
-                <div className="flex justify-between items-center mb-6 md:mb-8">
-                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Cadastrar Paciente</h3>
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-lg font-bold text-slate-900">Novo paciente</h3>
                   <button onClick={() => setIsPatientModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                    <Plus size={24} className="rotate-45" />
+                    <Plus size={20} className="rotate-45" />
                   </button>
                 </div>
 
-                <form onSubmit={handleCreatePatient} className="space-y-4">
+                <form onSubmit={handleCreatePatient} className="space-y-3">
+                  {/* Essencial: Nome */}
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nome Completo</label>
                     <input 
                       required
                       type="text" 
+                      placeholder="Nome completo"
                       value={newPatient.name}
                       onChange={(e) => setNewPatient({...newPatient, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">CPF</label>
-                      <input 
-                        type="text" 
-                        value={newPatient.cpf}
-                        onChange={(e) => setNewPatient({...newPatient, cpf: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Nascimento</label>
-                      <input 
-                        type="date" 
-                        value={newPatient.birth_date}
-                        onChange={(e) => setNewPatient({...newPatient, birth_date: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Telefone</label>
-                      <input 
-                        required
-                        type="text" 
-                        value={newPatient.phone}
-                        onChange={(e) => setNewPatient({...newPatient, phone: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">E-mail</label>
-                      <input 
-                        type="email" 
-                        value={newPatient.email}
-                        onChange={(e) => setNewPatient({...newPatient, email: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                    </div>
-                  </div>
-
+                  {/* Essencial: Telefone */}
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Endereço</label>
                     <input 
+                      required
                       type="text" 
-                      value={newPatient.address}
-                      onChange={(e) => setNewPatient({...newPatient, address: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      placeholder="Telefone"
+                      value={newPatient.phone}
+                      onChange={(e) => setNewPatient({...newPatient, phone: e.target.value})}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
                     />
                   </div>
 
-                  <div className="flex gap-4 pt-4">
+                  {/* Contato: Email */}
+                  <div>
+                    <input 
+                      type="email" 
+                      placeholder="E-mail (opcional)"
+                      value={newPatient.email}
+                      onChange={(e) => setNewPatient({...newPatient, email: e.target.value})}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                    />
+                  </div>
+
+                  {/* Informações Adicionais - Collapsible */}
+                  <details className="group">
+                    <summary className="cursor-pointer text-xs font-bold text-slate-400 uppercase tracking-wider py-3 hover:text-slate-600 transition-colors">
+                      + Informações adicionais
+                    </summary>
+                    <div className="space-y-3 pt-1">
+                      <div>
+                        <input 
+                          type="text" 
+                          placeholder="CPF (opcional)"
+                          value={newPatient.cpf}
+                          onChange={(e) => setNewPatient({...newPatient, cpf: e.target.value})}
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                        />
+                      </div>
+                      <div>
+                        <input 
+                          type="date" 
+                          value={newPatient.birth_date}
+                          onChange={(e) => setNewPatient({...newPatient, birth_date: e.target.value})}
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                          title="Data de Nascimento"
+                        />
+                      </div>
+                      <div>
+                        <input 
+                          type="text" 
+                          placeholder="Endereço (opcional)"
+                          value={newPatient.address}
+                          onChange={(e) => setNewPatient({...newPatient, address: e.target.value})}
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+                        />
+                      </div>
+                    </div>
+                  </details>
+
+                  <div className="flex gap-2.5 pt-4">
                     <button 
                       type="button"
                       onClick={() => setIsPatientModalOpen(false)}
-                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
+                      className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 text-sm font-bold rounded-full hover:bg-slate-100/70 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
+                      className="flex-1 px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-full shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
-                      Cadastrar Paciente
+                      Salvar
                     </button>
                   </div>
                 </form>
@@ -5879,7 +6071,7 @@ export default function App() {
       {/* Modal de Editar Dentista */}
       <AnimatePresence>
         {isEditDentistModalOpen && editingDentist && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5891,7 +6083,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+              className="relative bg-white/85 backdrop-blur-2xl border border-white/30 w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden"
             >
               <div className="p-8">
                 <div className="flex justify-between items-center mb-8">
@@ -5909,7 +6101,7 @@ export default function App() {
                       type="text" 
                       value={editingDentist.name}
                       onChange={(e) => setEditingDentist({...editingDentist, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
@@ -5919,7 +6111,7 @@ export default function App() {
                       type="email" 
                       value={editingDentist.email}
                       onChange={(e) => setEditingDentist({...editingDentist, email: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div className="flex gap-4 pt-4">
@@ -5947,7 +6139,7 @@ export default function App() {
       {/* Modal de Plano de Parcelamento */}
       <AnimatePresence>
         {isPaymentPlanModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5963,7 +6155,7 @@ export default function App() {
             >
               <div className="p-6 md:p-8">
                 <div className="flex justify-between items-center mb-6 md:mb-8">
-                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Novo Plano de Pagamento</h3>
+                  <h3 className="text-xl md:text-2xl font-bold text-slate-900">Novo parcelamento</h3>
                   <button onClick={() => setIsPaymentPlanModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                     <Plus size={24} className="rotate-45" />
                   </button>
@@ -6002,7 +6194,7 @@ export default function App() {
                       placeholder="Ex: Tratamento de Canal, Implante..."
                       value={newPaymentPlan.procedure}
                       onChange={(e) => setNewPaymentPlan({...newPaymentPlan, procedure: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
 
@@ -6049,13 +6241,13 @@ export default function App() {
                     <button 
                       type="button"
                       onClick={() => setIsPaymentPlanModalOpen(false)}
-                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-full hover:bg-slate-100/70 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-full shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
                       Criar Plano
                     </button>
@@ -6070,7 +6262,7 @@ export default function App() {
       {/* Modal de Recibo */}
       <AnimatePresence>
         {isReceiptModalOpen && selectedReceipt && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 receipt-modal-overlay">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 receipt-modal-overlay">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -6146,7 +6338,7 @@ export default function App() {
       {/* Modal de Novo Dentista */}
       <AnimatePresence>
         {isDentistModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -6158,11 +6350,11 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+              className="relative bg-white/85 backdrop-blur-2xl border border-white/30 w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden"
             >
               <div className="p-8">
                 <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-2xl font-bold text-slate-900">Novo Dentista</h3>
+                  <h3 className="text-2xl font-bold text-slate-900">Novo dentista</h3>
                   <button onClick={() => setIsDentistModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                     <Plus size={24} className="rotate-45" />
                   </button>
@@ -6176,7 +6368,7 @@ export default function App() {
                       type="text" 
                       value={newDentist.name}
                       onChange={(e) => setNewDentist({...newDentist, name: e.target.value})}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
                   <div>
@@ -6203,15 +6395,15 @@ export default function App() {
                     <button 
                       type="button"
                       onClick={() => setIsDentistModalOpen(false)}
-                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-full hover:bg-slate-100/70 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-xl shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
+                      className="flex-1 px-6 py-3 bg-primary text-white font-bold rounded-full shadow-[0_12px_36px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all active:scale-95"
                     >
-                      Cadastrar
+                      Salvar dentista
                     </button>
                   </div>
                 </form>
@@ -6224,7 +6416,7 @@ export default function App() {
       {/* Modal de Upload de Imagem */}
       <AnimatePresence>
         {isImageModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -6240,7 +6432,7 @@ export default function App() {
             >
               <div className="p-8">
                 <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-2xl font-bold text-slate-900">Upload de Imagem</h3>
+                  <h3 className="text-2xl font-bold text-slate-900">Adicionar imagem</h3>
                   <button onClick={() => setIsImageModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                     <Plus size={24} className="rotate-45" />
                   </button>
@@ -6315,7 +6507,7 @@ export default function App() {
       {/* Modal de Transação Financeira */}
       <AnimatePresence>
         {isTransactionModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -6327,13 +6519,13 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="relative bg-white/85 backdrop-blur-2xl border border-white/30 w-full max-w-lg rounded-[24px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="p-8 overflow-y-auto">
                 <div className="flex justify-between items-center mb-8">
                   <div>
                     <h3 className="text-2xl font-bold text-slate-900">
-                      {transactionType === 'INCOME' ? 'Nova Receita' : 'Nova Despesa'}
+                      {transactionType === 'INCOME' ? 'Lançar receita' : 'Lançar despesa'}
                     </h3>
                     <p className="text-sm text-slate-500">Preencha os dados da transação abaixo</p>
                   </div>
@@ -6352,7 +6544,7 @@ export default function App() {
                         placeholder={transactionType === 'INCOME' ? 'Ex: Limpeza - João Silva' : 'Ex: Aluguel'}
                         value={newTransaction.description}
                         onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -6360,7 +6552,7 @@ export default function App() {
                       <select 
                         value={newTransaction.category}
                         onChange={(e) => setNewTransaction({...newTransaction, category: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         {transactionType === 'INCOME' ? (
                           <>
@@ -6390,7 +6582,7 @@ export default function App() {
                         placeholder="0,00"
                         value={newTransaction.amount}
                         onChange={(e) => setNewTransaction({...newTransaction, amount: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none font-bold"
                       />
                     </div>
                     <div>
@@ -6400,7 +6592,7 @@ export default function App() {
                         type="date" 
                         value={newTransaction.date}
                         onChange={(e) => setNewTransaction({...newTransaction, date: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       />
                     </div>
                     <div>
@@ -6408,7 +6600,7 @@ export default function App() {
                       <select 
                         value={newTransaction.payment_method}
                         onChange={(e) => setNewTransaction({...newTransaction, payment_method: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                       >
                         <option value="Dinheiro">Dinheiro</option>
                         <option value="PIX">PIX</option>
@@ -6425,7 +6617,7 @@ export default function App() {
                           <select 
                             value={newTransaction.patient_id}
                             onChange={(e) => setNewTransaction({...newTransaction, patient_id: e.target.value})}
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                           >
                             <option value="">Selecione um paciente</option>
                             {patients.map(p => (
@@ -6440,7 +6632,7 @@ export default function App() {
                             placeholder="Ex: Limpeza, Canal..."
                             value={newTransaction.procedure}
                             onChange={(e) => setNewTransaction({...newTransaction, procedure: e.target.value})}
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none"
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-full focus:ring-2 focus:ring-primary/20 outline-none"
                           />
                         </div>
                       </>
@@ -6451,7 +6643,7 @@ export default function App() {
                         rows={2}
                         value={newTransaction.notes || ''}
                         onChange={(e) => setNewTransaction({...newTransaction, notes: e.target.value})}
-                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none resize-none"
                       />
                     </div>
                   </div>
@@ -6459,13 +6651,13 @@ export default function App() {
                     <button 
                       type="button"
                       onClick={() => setIsTransactionModalOpen(false)}
-                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-all"
+                      className="flex-1 px-6 py-3 border border-slate-200 text-slate-600 font-bold rounded-full hover:bg-slate-100/70 transition-all"
                     >
                       Cancelar
                     </button>
                     <button 
                       type="submit"
-                      className={`flex-1 px-6 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
+                      className={`flex-1 px-6 py-3 text-white font-bold rounded-full shadow-lg transition-all active:scale-95 ${
                         transactionType === 'INCOME' 
                           ? 'bg-primary shadow-primary/10 hover:opacity-90' 
                           : 'bg-rose-600 shadow-rose-100 hover:bg-rose-700'
@@ -6489,15 +6681,15 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+              className="bg-white/85 backdrop-blur-2xl border border-white/30 rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-primary/5">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
                     <DollarSign size={20} />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-slate-800">Receber Parcela</h3>
+                    <h3 className="text-lg font-bold text-slate-800">Registrar recebimento</h3>
                     <p className="text-xs text-slate-500">Confirme o recebimento do pagamento</p>
                   </div>
                 </div>
@@ -6510,7 +6702,7 @@ export default function App() {
               </div>
 
               <div className="p-6 space-y-6 overflow-y-auto">
-                <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
+                <div className="bg-slate-50 rounded-[20px] p-4 space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-slate-500">Paciente</span>
                     <span className="text-sm font-semibold text-slate-700">{selectedPatient?.name || selectedInstallment.patient_name}</span>
@@ -6538,7 +6730,7 @@ export default function App() {
                       <button
                         key={method}
                         onClick={() => setPaymentMethod(method)}
-                        className={`p-3 rounded-xl border text-sm font-medium transition-all ${
+                        className={`p-3 rounded-full border text-sm font-medium transition-all ${
                           paymentMethod === method
                             ? 'bg-primary/5 border-primary/20 text-primary shadow-sm'
                             : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
@@ -6553,13 +6745,13 @@ export default function App() {
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={() => setIsReceiveInstallmentModalOpen(false)}
-                    className="flex-1 py-3 px-4 text-slate-600 font-bold hover:bg-slate-50 rounded-xl transition-colors border border-slate-200"
+                    className="flex-1 py-3 px-4 text-slate-600 font-bold hover:bg-slate-100/70 rounded-full transition-colors border border-slate-200"
                   >
                     Cancelar
                   </button>
                   <button
                     onClick={() => handlePayInstallment(selectedInstallment.id, paymentMethod)}
-                    className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl hover:opacity-90 transition-all shadow-[0_12px_36px_rgba(38,78,54,0.12)] active:scale-95"
+                    className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-full hover:opacity-90 transition-all shadow-[0_12px_36px_rgba(38,78,54,0.12)] active:scale-95"
                   >
                     Confirmar
                   </button>
@@ -6578,15 +6770,15 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="bg-white/85 backdrop-blur-2xl border border-white/30 rounded-[24px] shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50/50">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
                     <List size={20} />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-slate-800">Parcelas do Plano</h3>
+                    <h3 className="text-lg font-bold text-slate-800">Parcelas</h3>
                     <p className="text-xs text-slate-500">{selectedPlan.procedure} - {selectedPatient?.name || selectedPlan.patient_name}</p>
                   </div>
                 </div>
@@ -6642,7 +6834,7 @@ export default function App() {
                                       setSelectedInstallment(inst);
                                       setIsReceiveInstallmentModalOpen(true);
                                     }}
-                                    className="text-primary hover:opacity-80 font-bold text-xs bg-primary/10 px-3 py-1.5 rounded-lg transition-colors"
+                                    className="text-primary hover:opacity-80 font-bold text-xs bg-primary/10 px-3 py-1.5 rounded-full transition-colors"
                                   >
                                   Receber
                                 </button>
@@ -6698,19 +6890,19 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-white/85 backdrop-blur-2xl border border-white/30 rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden"
             >
               <div className="p-6 text-center">
                 <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
                   <AlertTriangle size={32} />
                 </div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Confirmar Ação</h3>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Confirmar</h3>
                 <p className="text-slate-600">{confirmation.message}</p>
               </div>
               <div className="p-6 bg-slate-50 flex gap-3">
                 <button 
                   onClick={() => setConfirmation(null)}
-                  className="flex-1 px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-100 transition-all"
+                  className="flex-1 px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-full hover:bg-slate-100 transition-all"
                 >
                   Cancelar
                 </button>
@@ -6719,7 +6911,7 @@ export default function App() {
                     confirmation.onConfirm();
                     setConfirmation(null);
                   }}
-                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-lg shadow-rose-600/20 transition-all"
+                  className="flex-1 px-6 py-3 bg-rose-600 text-white font-bold rounded-full hover:bg-rose-700 shadow-lg shadow-rose-600/20 transition-all"
                 >
                   Confirmar
                 </button>
