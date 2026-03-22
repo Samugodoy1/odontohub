@@ -1445,12 +1445,10 @@ export default function App() {
   });
 
   const opportunitiesCount = todayOpportunities.count;
-  const opportunitySlots = todayOpportunities.slots;
 
-  const newPatientsTodayCount = patientCardsData.filter(({ patient }) => {
-    if (!patient.created_at) return false;
-    return new Date(patient.created_at).toDateString() === now.toDateString();
-  }).length;
+  const attendedTodayCount = proceduresToday;
+  const [todayAttendanceHint, setTodayAttendanceHint] = useState<string | null>(null);
+  const todayAttendanceHintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [highlightTodayMetric, setHighlightTodayMetric] = useState(false);
   const hasInitializedTodayMetricRef = useRef(false);
@@ -1464,51 +1462,72 @@ export default function App() {
     setHighlightTodayMetric(true);
     const timeout = setTimeout(() => setHighlightTodayMetric(false), 900);
     return () => clearTimeout(timeout);
-  }, [newPatientsTodayCount]);
+  }, [attendedTodayCount]);
 
-  const openSuggestedScheduling = () => {
-    if (opportunitySlots.length > 0) {
-      const suggested = opportunitySlots[0];
-      setActiveTab('agenda');
-      setAgendaFocusMode(false);
-      setAgendaViewMode('day');
-      setSelectedDate(new Date(suggested.startTime));
-      setSuggestedSlot({
-        date: suggested.startTime,
-        duration: suggested.duration,
-        procedure: getProcedureByDuration(suggested.duration)
-      });
-      return;
+  useEffect(() => {
+    return () => {
+      if (todayAttendanceHintTimeoutRef.current) {
+        clearTimeout(todayAttendanceHintTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const getTodayAttendanceHint = (count: number) => {
+    if (count >= 4) return `${count} atendimentos hoje, parabens 🔥`;
+    if (count === 3) return '3 atendimentos hoje, excelente ritmo';
+    if (count === 2) return '2 atendimentos hoje, continue assim';
+    if (count === 1) return '1 atendimento hoje, bom comeco';
+    return 'Sem atendimentos finalizados ate agora';
+  };
+
+  const showTodayAttendanceHint = () => {
+    const message = getTodayAttendanceHint(attendedTodayCount);
+    showTemporaryStatusHint(message);
+  };
+
+  const showTemporaryStatusHint = (message: string) => {
+    setTodayAttendanceHint(message);
+
+    if (todayAttendanceHintTimeoutRef.current) {
+      clearTimeout(todayAttendanceHintTimeoutRef.current);
     }
-    setActiveTab('agenda');
+
+    todayAttendanceHintTimeoutRef.current = setTimeout(() => {
+      setTodayAttendanceHint(null);
+    }, 3500);
+  };
+
+  const showOpportunitiesHint = () => {
+    const message = `Voce tem ${opportunitiesCount} oportunidade${opportunitiesCount === 1 ? '' : 's'} de agendamento hoje`;
+    showTemporaryStatusHint(message);
   };
 
   const statusBarItems = [
-    ...(attentionPatientsCount > 0
-      ? [{
-          id: 'attention',
-          text: `${attentionPatientsCount} precisam de atenção`,
-          onClick: () => setPatientManagementFilter('OVERDUE'),
-          tone: 'text-rose-600'
-        }]
-      : []),
-    ...(opportunitiesCount > 0
-      ? [{
-          id: 'opportunities',
-          text: `${opportunitiesCount} oportunidades`,
-          onClick: openSuggestedScheduling,
-          tone: 'text-slate-500'
-        }]
-      : []),
-    ...(newPatientsTodayCount > 0
-      ? [{
-          id: 'today',
-          text: `🔥 ${newPatientsTodayCount} hoje`,
-          onClick: () => setActiveTab('dashboard'),
-          tone: highlightTodayMetric ? 'text-emerald-600' : 'text-slate-500'
-        }]
-      : [])
-  ];
+    {
+      id: 'today',
+      count: attendedTodayCount,
+      text: `${attendedTodayCount > 3 ? '🔥 ' : ''}${attendedTodayCount} hoje`,
+      onClick: showTodayAttendanceHint,
+      tone: highlightTodayMetric ? 'text-emerald-600' : 'text-slate-500'
+    },
+    {
+      id: 'opportunities',
+      count: opportunitiesCount,
+      text: `${opportunitiesCount} oportunidade${opportunitiesCount === 1 ? '' : 's'}`,
+      onClick: showOpportunitiesHint,
+      tone: 'text-slate-500'
+    },
+    {
+      id: 'attention',
+      count: attentionPatientsCount,
+      text: `${attentionPatientsCount} ${attentionPatientsCount === 1 ? 'precisa' : 'precisam'} de atenção`,
+      onClick: () => {
+        setActiveTab('pacientes');
+        setPatientManagementFilter('OVERDUE');
+      },
+      tone: attentionPatientsCount > 0 ? 'text-rose-600' : 'text-slate-500'
+    }
+  ].filter(item => item.count > 0);
 
   const formatProcedure = (input: string) => {
     const normalized = (input || '').trim();
@@ -2497,7 +2516,7 @@ export default function App() {
       <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full max-w-full print:p-0 pb-24 md:pb-8">
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeTab + (searchTerm ? '-search' : '')}
+            key={activeTab}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -3504,12 +3523,15 @@ export default function App() {
             )}
 
             {activeTab === 'pacientes' && (
-              <div className="space-y-4">
-                <div className="space-y-1.5 mb-2">
-                  <div>
-                    <h3 className="text-[22px] font-bold tracking-tight text-slate-900">Pacientes</h3>
-                  </div>
+              <div className="space-y-4 pt-10 px-2 max-w-2xl mx-auto">
+                <header className="space-y-1.5 mb-4 px-2">
+                  <h1 className="text-[28px] font-bold tracking-tight text-[#1C1C1E]">Pacientes</h1>
+                  <p className="text-[14px] font-normal text-slate-400">
+                    Acompanhe prioridades e oportunidades do dia
+                  </p>
+                </header>
 
+                <div className="space-y-1.5 mb-2">
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -3534,26 +3556,39 @@ export default function App() {
                 </div>
 
                 {statusBarItems.length > 0 && (
-                  <div className="h-8 flex items-center gap-1.5 text-xs text-slate-500 px-1 mb-2 overflow-x-auto whitespace-nowrap">
-                    {statusBarItems.map((item, index) => (
-                      <React.Fragment key={item.id}>
-                        <motion.button
-                          onClick={item.onClick}
-                          className={`inline-flex items-center ${item.tone} hover:text-slate-800 transition-colors`}
-                          whileTap={{ scale: 0.98 }}
-                        >
-                          <motion.span
-                            key={`${item.id}-${item.text}`}
-                            initial={{ opacity: 0.6, scale: 0.98 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            transition={{ duration: 0.15 }}
+                  <div className="mb-2">
+                    <div className="h-8 flex items-center gap-1.5 text-xs text-slate-500 px-1 overflow-x-auto whitespace-nowrap">
+                      {statusBarItems.map((item, index) => (
+                        <React.Fragment key={item.id}>
+                          <motion.button
+                            onClick={item.onClick}
+                            className={`inline-flex items-center ${item.tone} hover:text-slate-800 transition-colors`}
+                            whileTap={{ scale: 0.98 }}
                           >
-                            {item.text}
-                          </motion.span>
-                        </motion.button>
-                        {index < statusBarItems.length - 1 && <span className="text-slate-300">•</span>}
-                      </React.Fragment>
-                    ))}
+                            <motion.span
+                              key={`${item.id}-${item.text}`}
+                              initial={{ opacity: 0.6, scale: 0.98 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{ duration: 0.15 }}
+                            >
+                              {item.text}
+                            </motion.span>
+                          </motion.button>
+                          {index < statusBarItems.length - 1 && <span className="text-slate-300">•</span>}
+                        </React.Fragment>
+                      ))}
+                    </div>
+
+                    {todayAttendanceHint && (
+                      <motion.p
+                        initial={{ opacity: 0, y: -2 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -2 }}
+                        className="px-1 mt-0.5 text-[11px] text-slate-400"
+                      >
+                        {todayAttendanceHint}
+                      </motion.p>
+                    )}
                   </div>
                 )}
 
@@ -3579,51 +3614,61 @@ export default function App() {
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  <div className="p-3 sm:p-4 space-y-3">
+                  <div className="p-3 sm:p-4 space-y-2">
                     {patientCardsData.map(({ patient, meta }) => {
-                      const indicatorConfig =
-                        meta.indicator === 'OVERDUE'
-                          ? { dot: 'bg-rose-500', bg: 'bg-rose-50', text: 'text-rose-700', label: 'Atrasado' }
-                          : meta.indicator === 'UPCOMING_REVIEW'
-                            ? { dot: 'bg-amber-500', bg: 'bg-amber-50', text: 'text-amber-700', label: 'Revisão próxima' }
-                            : { dot: 'bg-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Em dia' };
-
-                      const clinicalLabel =
+                      const statusConfig =
                         meta.priorityStatus === 'EM_TRATAMENTO'
-                          ? 'Em tratamento'
-                          : meta.priorityStatus === 'REVISAO'
-                            ? 'Revisão'
-                            : meta.priorityStatus === 'ATRASADO'
-                              ? 'Atrasado'
-                              : 'Em dia';
+                          ? { dot: 'bg-primary', badge: 'bg-primary/8 text-primary', label: 'Em tratamento', avatarBg: 'bg-primary/10 text-primary' }
+                          : meta.priorityStatus === 'ATRASADO'
+                            ? { dot: 'bg-rose-500', badge: 'bg-rose-50 text-rose-600', label: 'Atrasado', avatarBg: 'bg-rose-50 text-rose-500' }
+                            : meta.priorityStatus === 'REVISAO'
+                              ? { dot: 'bg-amber-500', badge: 'bg-amber-50 text-amber-600', label: 'Revisão', avatarBg: 'bg-amber-50 text-amber-600' }
+                              : { dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-600', label: 'Em dia', avatarBg: 'bg-emerald-50 text-emerald-600' };
+
+                      const initials = patient.name.trim().split(' ').filter(Boolean).slice(0, 2).map((n: string) => n[0].toUpperCase()).join('');
 
                       return (
                         <div
                           key={patient.id}
                           onClick={() => openPatientRecord(patient.id)}
-                          className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:shadow-sm transition-all"
+                          className="group cursor-pointer rounded-2xl border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 hover:shadow-sm transition-all"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 pr-2">
-                              <p className="text-[15px] font-bold text-slate-900 truncate">{patient.name}</p>
-                              <p className="mt-0.5 text-[12px] text-slate-600 truncate">{clinicalLabel}</p>
-                              <p className="mt-1.5 text-[11px] text-slate-400 truncate">
-                                <span className={`inline-block w-1.5 h-1.5 rounded-full align-middle mr-1.5 ${indicatorConfig.dot}`} />
-                                {indicatorConfig.label} • {meta.timeSinceLastVisit}
+                          <div className="flex items-center gap-3">
+                            {/* Avatar minimalista */}
+                            <div className={`w-9 h-9 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${patient.photo_url ? 'bg-slate-100' : statusConfig.avatarBg}`}>
+                              {patient.photo_url ? (
+                                <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <span className="text-[12px] font-semibold tracking-tight">{initials}</span>
+                              )}
+                            </div>
+
+                            {/* Info */}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-[15px] font-semibold text-slate-900 truncate">{patient.name}</p>
+                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${statusConfig.badge}`}>
+                                  {statusConfig.label}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">
+                                <span className={`inline-block w-1.5 h-1.5 rounded-full align-middle mr-1 ${statusConfig.dot}`} />
+                                {meta.timeSinceLastVisit}
                               </p>
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Ações */}
+                            <div className="flex items-center gap-1 shrink-0">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openAppointmentModalForPatient(patient);
                                 }}
-                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 hover:bg-primary/10 hover:text-primary transition-colors flex items-center justify-center"
+                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-primary/10 hover:text-primary transition-colors flex items-center justify-center"
                                 aria-label="Agendar consulta"
                                 title="Agendar consulta"
                               >
-                                <Calendar size={15} />
+                                <Calendar size={14} />
                               </button>
 
                               <button
@@ -3634,20 +3679,15 @@ export default function App() {
                                     window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
                                   }
                                 }}
-                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 transition-colors flex items-center justify-center"
+                                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 transition-colors flex items-center justify-center"
                                 aria-label="Contato via WhatsApp"
                                 title="Contato via WhatsApp"
                               >
-                                <MessageCircle size={15} />
+                                <MessageCircle size={14} />
                               </button>
+
+                              <ChevronRight size={13} className="text-slate-300 group-hover:text-slate-400 transition-colors ml-0.5" />
                             </div>
-                          </div>
-
-                          <div className="mt-2 h-px bg-slate-100" />
-
-                          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                            <span className="truncate">Toque para abrir detalhes</span>
-                            <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 transition-colors" />
                           </div>
                         </div>
                       );
@@ -3664,463 +3704,26 @@ export default function App() {
           )}
 
             {activeTab === 'prontuario' && selectedPatient && (
-              <div className="space-y-8">
-                <div className="flex items-center gap-3 md:gap-4 mb-6">
-                  <button 
-                    onClick={() => setActiveTab('pacientes')}
-                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-                  >
-                    <ChevronRight size={20} className="rotate-180 md:hidden" />
-                    <ChevronRight size={24} className="rotate-180 hidden md:block" />
-                  </button>
-                  <h3 className="text-xl md:text-2xl font-bold text-slate-900 truncate">Prontuário: {selectedPatient.name}</h3>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  {/* Sidebar: Patient Info & Anamnesis */}
-                  <div className="space-y-8">
-                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                      <div className="flex flex-col items-center mb-6">
-                        <div className="relative group">
-                          <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-primary transition-all">
-                            {selectedPatient.photo_url ? (
-                              <img 
-                                src={selectedPatient.photo_url} 
-                                alt={selectedPatient.name} 
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <UserCircle size={48} />
-                            )}
-                          </div>
-                          <label className="absolute -bottom-2 -right-2 p-2 bg-primary text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-all">
-                            <Camera size={16} />
-                            <input 
-                              type="file" 
-                              className="hidden" 
-                              accept="image/*"
-                              onChange={handlePatientPhotoUpload}
-                            />
-                          </label>
-                        </div>
-                      </div>
-                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <UserCircle size={18} className="text-primary" />
-                        Dados Pessoais
-                      </h4>
-                      <div className="space-y-3 text-sm">
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">CPF</span> {selectedPatient.cpf || '---'}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Nascimento</span> {formatDate(selectedPatient.birth_date) || '---'}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Telefone</span> {selectedPatient.phone}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">E-mail</span> {selectedPatient.email}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Endereço</span> {selectedPatient.address || '---'}</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <AlertCircle size={18} className="text-rose-500" />
-                        Anamnese
-                      </h4>
-                      <form onSubmit={saveAnamnesis} className="space-y-4">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={3}
-                            value={selectedPatient.anamnesis?.medical_history || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                allergies: '', 
-                                medications: '', 
-                                ...selectedPatient.anamnesis, 
-                                medical_history: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={2}
-                            value={selectedPatient.anamnesis?.allergies || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                medical_history: '', 
-                                medications: '', 
-                                ...selectedPatient.anamnesis, 
-                                allergies: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
-                          <textarea 
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                            rows={2}
-                            value={selectedPatient.anamnesis?.medications || ''}
-                            onChange={(e) => setSelectedPatient({
-                              ...selectedPatient, 
-                              anamnesis: { 
-                                medical_history: '', 
-                                allergies: '', 
-                                ...selectedPatient.anamnesis, 
-                                medications: e.target.value 
-                              }
-                            })}
-                          />
-                        </div>
-                        <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">
-                          Salvar Anamnese
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-
-                  {/* Main: Evolution & Odontogram Placeholder */}
-                  <div className="lg:col-span-2 space-y-8">
-                    {/* Tabs for Patient Record */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="flex border-b border-slate-100">
-                        {['evolucao', 'imagens', 'financeiro'].map((tab) => (
-                          <button
-                            key={tab}
-                            onClick={() => setSelectedPatientTab(tab as any)}
-                            className={`px-6 py-4 text-sm font-bold transition-all border-b-2 ${
-                              selectedPatientTab === tab 
-                                ? 'border-primary text-primary bg-primary/5' 
-                                : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'
-                            }`}
-                          >
-                            {tab === 'evolucao' ? 'Evolução Clínica' : tab === 'imagens' ? 'Imagens & RX' : 'Financeiro'}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="p-6">
-                        {selectedPatientTab === 'evolucao' ? (
-                          <>
-                            <div className="flex justify-between items-center mb-6">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ClipboardList size={18} className="text-primary" />
-                                Histórico de Evolução
-                              </h4>
-                              <button 
-                                onClick={() => setIsEvolutionFormOpen(!isEvolutionFormOpen)}
-                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
-                              >
-                                <Plus size={14} className={isEvolutionFormOpen ? 'rotate-45' : ''} /> 
-                                {isEvolutionFormOpen ? 'Cancelar' : 'Nova Evolução'}
-                              </button>
-                            </div>
-
-                            <AnimatePresence>
-                              {isEvolutionFormOpen && (
-                                <motion.div 
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  className="overflow-hidden mb-6"
-                                >
-                                  <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Procedimento</label>
-                                        <input 
-                                          type="text"
-                                          placeholder="Ex: Limpeza, Restauração..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                                          value={newEvolution.procedure}
-                                          onChange={(e) => setNewEvolution({...newEvolution, procedure: e.target.value})}
-                                        />
-                                      </div>
-                                      <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Notas</label>
-                                        <textarea 
-                                          placeholder="Descreva a evolução do paciente..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-                                          rows={2}
-                                          value={newEvolution.notes || ''}
-                                          onChange={(e) => setNewEvolution({...newEvolution, notes: e.target.value})}
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-end gap-2">
-                                      <button 
-                                        onClick={() => setIsEvolutionFormOpen(false)}
-                                        className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
-                                      >
-                                        Cancelar
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          if (newEvolution.notes || newEvolution.procedure) {
-                                            addEvolution({ notes: newEvolution.notes, procedure: newEvolution.procedure });
-                                            setNewEvolution({ notes: '', procedure: '' });
-                                            setIsEvolutionFormOpen(false);
-                                          } else {
-                                            alert('Preencha pelo menos um campo (Procedimento ou Notas).');
-                                          }
-                                        }}
-                                        className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors"
-                                      >
-                                        Adicionar Registro
-                                      </button>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-
-                            <div className="space-y-6">
-                              {selectedPatient.evolution && selectedPatient.evolution.length > 0 ? (
-                                selectedPatient.evolution.map((evo) => (
-                                  <div key={evo.id} className="relative pl-6 border-l-2 border-slate-100 pb-6 last:pb-0">
-                                    <div className="absolute -left-[9px] top-0 w-4 h-4 bg-white border-2 border-primary rounded-full" />
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                                      <div className="flex justify-between items-start mb-2">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase">
-                                          {formatDate(evo.date)}
-                                        </span>
-                                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                                          {evo.procedure_performed}
-                                        </span>
-                                      </div>
-                                      <p className="text-sm text-slate-700 leading-relaxed">{evo.notes}</p>
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="text-center py-12 text-slate-400">
-                                  <ClipboardList size={48} className="mx-auto mb-4 opacity-20" />
-                                  <p>Nenhum registro de evolução clínica.</p>
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        ) : selectedPatientTab === 'imagens' ? (
-                          <div className="space-y-6">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ImageIcon size={18} className="text-primary" />
-                                Imagens e Exames (RX)
-                              </h4>
-                              <button 
-                                onClick={() => setIsImageModalOpen(true)}
-                                className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors flex items-center gap-2"
-                              >
-                                <Upload size={14} />
-                                Upload
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                              {selectedPatient.files && selectedPatient.files.length > 0 ? (
-                                selectedPatient.files.map((file) => (
-                                  <div key={file.id} className="group relative bg-slate-50 rounded-xl border border-slate-100 overflow-hidden aspect-square">
-                                    <img 
-                                      src={file.file_url} 
-                                      alt={file.description} 
-                                      className="w-full h-full object-cover"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-4 text-center">
-                                      <p className="text-white text-xs font-bold mb-2">{file.description}</p>
-                                      <div className="flex gap-2">
-                                        <button 
-                                          onClick={() => window.open(file.file_url, '_blank')}
-                                          className="p-2 bg-white/20 hover:bg-white/40 rounded-lg text-white transition-colors"
-                                        >
-                                          <Search size={14} />
-                                        </button>
-                                        <button 
-                                          onClick={() => deleteFile(file.id)}
-                                          className="p-2 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white transition-colors"
-                                        >
-                                          <Trash2 size={14} />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="col-span-full py-12 text-center text-slate-400">
-                                  <ImageIcon size={48} className="mx-auto mb-4 opacity-20" />
-                                  <p>Nenhuma imagem ou exame anexado.</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-8">
-                            <div className="flex justify-between items-center">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <DollarSign size={18} className="text-primary" />
-                                Histórico Financeiro do Paciente
-                              </h4>
-                              <button 
-                                onClick={() => {
-                                  setNewPaymentPlan({...newPaymentPlan, patient_id: selectedPatient.id.toString()});
-                                  setIsPaymentPlanModalOpen(true);
-                                }}
-                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
-                              >
-                                <Plus size={14} /> 
-                                Novo Plano de Pagamento
-                              </button>
-                            </div>
-
-                            {/* Payment Plans */}
-                            <div className="space-y-4">
-                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Planos de Pagamento</h5>
-                              {selectedPatient.financial?.paymentPlans && selectedPatient.financial.paymentPlans.length > 0 ? (
-                                selectedPatient.financial.paymentPlans.map(plan => {
-                                  const planInstallments = selectedPatient.financial?.installments.filter(i => i.payment_plan_id === plan.id) || [];
-                                  const hasOverdue = planInstallments.some(i => i.status === 'PENDING' && isOverdue(i.due_date));
-                                  
-                                  return (
-                                    <div key={plan.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                                      <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                          <p className="font-bold text-slate-800">{plan.procedure}</p>
-                                          <p className="text-xs text-slate-500">
-                                            Total: {Number(plan.total_amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} • {plan.installments_count} parcelas
-                                          </p>
-                                        </div>
-                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                          plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 
-                                          plan.status === 'CANCELLED' ? 'bg-slate-200 text-slate-600' : 
-                                          hasOverdue ? 'bg-rose-100 text-rose-700' :
-                                          'bg-blue-100 text-blue-700'
-                                        }`}>
-                                          {plan.status === 'COMPLETED' ? 'Concluído' : 
-                                           plan.status === 'CANCELLED' ? 'Cancelado' : 
-                                           hasOverdue ? 'Atrasado' : 'Em Aberto'}
-                                        </span>
-                                      </div>
-                                      
-                                      <div className="space-y-2">
-                                        {planInstallments.map(inst => (
-                                          <div key={inst.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-100 text-sm">
-                                            <div className="flex items-center gap-3">
-                                              <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center text-[10px] font-bold">
-                                                {inst.number}
-                                              </span>
-                                              <div>
-                                                <p className="font-medium text-slate-700">{Number(inst.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase">Vencimento: {formatDate(inst.due_date)}</p>
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                inst.status === 'PAID' ? 'bg-primary/10 text-primary' : 
-                                                isOverdue(inst.due_date) ? 'bg-rose-100 text-rose-700' : 
-                                                'bg-amber-100 text-amber-700'
-                                              }`}>
-                                                {inst.status === 'PAID' ? 'Pago' : isOverdue(inst.due_date) ? 'Atrasado' : 'Pendente'}
-                                              </span>
-                                              {inst.status === 'PENDING' && (
-                                                <button 
-                                                  onClick={() => handlePayInstallment(inst.id, 'Dinheiro')}
-                                                  className="text-[10px] font-bold text-primary hover:underline"
-                                                >
-                                                  Pagar
-                                                </button>
-                                              )}
-                                              {inst.status === 'PAID' && inst.transaction_id && (
-                                                <button 
-                                                  onClick={() => {
-                                                    const trans = selectedPatient.financial?.transactions.find(t => t.id === inst.transaction_id);
-                                                    if (trans) generateReceipt(trans);
-                                                  }}
-                                                  className="text-[10px] font-bold text-blue-600 hover:underline"
-                                                >
-                                                  Recibo
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <div className="py-8 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                                  <DollarSign size={32} className="mx-auto mb-2 opacity-20" />
-                                  <p className="text-sm">Nenhum plano de parcelamento ativo.</p>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Recent Transactions */}
-                            <div className="space-y-4">
-                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pagamentos Recentes</h5>
-                              <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden overflow-x-auto">
-                                <table className="w-full text-left text-sm min-w-[500px]">
-                                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-400 uppercase">
-                                    <tr>
-                                      <th className="px-4 py-3">Data</th>
-                                      <th className="px-4 py-3">Descrição</th>
-                                      <th className="px-4 py-3 text-right">Valor</th>
-                                      <th className="px-4 py-3"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100">
-                                    {selectedPatient.financial?.transactions.map(t => (
-                                      <tr key={t.id} className="hover:bg-slate-50">
-                                        <td className="px-4 py-3 text-slate-500">{formatDate(t.date)}</td>
-                                        <td className="px-4 py-3 font-medium text-slate-700">{t.description}</td>
-                                        <td className={`px-4 py-3 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
-                                          {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                        </td>
-                                        <td className="px-4 py-3 text-right">
-                                          <button 
-                                            onClick={() => generateReceipt(t)}
-                                            className="p-1.5 text-slate-400 hover:text-primary transition-colors"
-                                            title="Gerar Recibo"
-                                          >
-                                            <FileText size={16} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                    {(!selectedPatient.financial?.transactions || selectedPatient.financial.transactions.length === 0) && (
-                                      <tr>
-                                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400">Nenhuma transação registrada.</td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Odontogram */}
-                    <div className="bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-6">
-                        <h4 className="text-xl font-bold text-slate-800">Odontograma Interativo</h4>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Clique no dente para alterar o status</span>
-                      </div>
-                      <Odontogram 
-                        data={selectedPatient.odontogram || {}} 
-                        history={selectedPatient.toothHistory || []}
-                        onChange={saveOdontogram} 
-                        onAddHistory={addToothHistory}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PatientClinical
+                patient={selectedPatient}
+                appointments={appointments}
+                onUpdatePatient={async (updated: any) => {
+                  setSelectedPatient(updated);
+                  await handleUpdatePatient(updated);
+                }}
+                onAddEvolution={async (data: any) => {
+                  const updated = {
+                    ...selectedPatient,
+                    evolution: [data, ...(selectedPatient.evolution || [])],
+                  };
+                  setSelectedPatient(updated);
+                  await addEvolution(data);
+                }}
+                setAppActiveTab={setActiveTab}
+                navigate={navigate}
+              />
             )}
+
             {activeTab === 'financeiro' && (
               <div className="space-y-6">
                 <div className="mb-8">

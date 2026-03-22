@@ -4,7 +4,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   
-  --color-primary: #264E36; /* Pantone 19-6050 TCX Eden */
+  --color-primary: #0C9B72;
 }
 
 @layer base {

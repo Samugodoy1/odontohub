@@ -49,20 +49,20 @@ const toothNumbers = {
 };
 
 const statusColors: Record<ToothStatus, string> = {
-  healthy: 'bg-white border-black/5 text-[#64748B]',
-  decay: 'bg-[#EF4444] border-red-600 text-white',
-  filling: 'bg-[#3B82F6] border-blue-600 text-white',
-  crown: 'bg-[#D97706] border-amber-700 text-white',
-  root_canal_done: 'bg-primary border-primary/20 text-white',
-  root_canal_needed: 'bg-[#F59E0B] border-orange-600 text-white',
-  implant: 'bg-[#6366F1] border-indigo-700 text-white',
-  extraction_done: 'bg-[#1E293B] border-slate-900 text-white',
-  extraction_needed: 'bg-[#FACC15] border-yellow-500 text-[#713F12]',
-  fracture: 'bg-[#B91C1C] border-red-800 text-white',
-  wear: 'bg-[#94A3B8] border-slate-500 text-white',
-  facet: 'bg-[#22D3EE] border-cyan-500 text-white',
-  prosthesis: 'bg-[#A855F7] border-purple-600 text-white',
-  missing: 'bg-[#E2E8F0] border-slate-300 text-[#94A3B8]',
+  healthy: 'bg-white border-slate-300 text-slate-700',
+  decay: 'bg-red-600 border-red-800 text-white',
+  filling: 'bg-blue-600 border-blue-800 text-white',
+  crown: 'bg-amber-600 border-amber-800 text-white',
+  root_canal_done: 'bg-primary border-emerald-950 text-white',
+  root_canal_needed: 'bg-orange-500 border-orange-700 text-white',
+  implant: 'bg-indigo-600 border-indigo-800 text-white',
+  extraction_done: 'bg-slate-800 border-slate-950 text-white',
+  extraction_needed: 'bg-yellow-300 border-yellow-500 text-amber-900',
+  fracture: 'bg-rose-700 border-rose-900 text-white',
+  wear: 'bg-zinc-500 border-zinc-700 text-white',
+  facet: 'bg-cyan-600 border-cyan-800 text-white',
+  prosthesis: 'bg-purple-600 border-purple-800 text-white',
+  missing: 'bg-slate-200 border-slate-400 text-slate-600',
 };
 
 const statusLabels: Record<ToothStatus, string> = {
@@ -157,9 +157,9 @@ export const Odontogram: React.FC<OdontogramProps> = ({
           type="button"
           onClick={() => handleToothClick(num)}
           className={`
-            w-10 h-12 rounded-lg border flex items-center justify-center text-[10px] font-bold transition-all
+            w-12 h-[4.1rem] sm:w-[3.15rem] sm:h-[4.45rem] rounded-[18px] border-[1.5px] flex items-center justify-center text-[11px] sm:text-[12px] font-extrabold tracking-tight transition-all duration-200 active:scale-[0.98]
             ${statusColors[tooth.status]}
-            ${isSelected ? 'ring-2 ring-primary scale-110 z-10' : 'hover:scale-105'}
+            ${isSelected ? 'ring-2 ring-primary scale-[1.08] z-10 shadow-[0_16px_28px_rgba(12,155,114,0.24)]' : 'hover:scale-[1.03] hover:shadow-[0_10px_18px_rgba(15,23,42,0.10)]'}
           `}
         >
           {num}
@@ -169,35 +169,42 @@ export const Odontogram: React.FC<OdontogramProps> = ({
   };
 
   return (
-    <div className="space-y-8 p-6 bg-white rounded-3xl shadow-sm border-none">
-      <div className="flex flex-col gap-8 overflow-x-auto pb-4">
+    <div className="space-y-7 p-2 sm:p-3 bg-transparent rounded-none shadow-none border-none">
+      <div className="flex items-start justify-between gap-3 px-1">
+        <div>
+          <h3 className="text-lg sm:text-[22px] font-extrabold tracking-[-0.015em] text-slate-950">Visão dentária</h3>
+          <p className="text-xs sm:text-sm leading-6 text-slate-700">Selecione o dente para atualizar procedimentos e evolução.</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-8 overflow-x-auto pb-3 bg-gradient-to-b from-white/60 to-transparent rounded-[28px]">
         {/* Upper Jaw */}
-        <div className="flex justify-center gap-1 min-w-max">
-          <div className="flex gap-1 border-r border-slate-50 pr-2">
+        <div className="flex justify-center gap-1.5 min-w-max">
+          <div className="flex gap-1.5 border-r border-slate-200 pr-3">
             {toothNumbers.upperRight.map(renderTooth)}
           </div>
-          <div className="flex gap-1 pl-2">
+          <div className="flex gap-1.5 pl-3">
             {toothNumbers.upperLeft.map(renderTooth)}
           </div>
         </div>
 
         {/* Lower Jaw */}
-        <div className="flex justify-center gap-1 min-w-max">
-          <div className="flex gap-1 border-r border-slate-50 pr-2">
+        <div className="flex justify-center gap-1.5 min-w-max">
+          <div className="flex gap-1.5 border-r border-slate-200 pr-3">
             {[...toothNumbers.lowerRight].reverse().map(renderTooth)}
           </div>
-          <div className="flex gap-1 pl-2">
+          <div className="flex gap-1.5 pl-3">
             {[...toothNumbers.lowerLeft].reverse().map(renderTooth)}
           </div>
         </div>
       </div>
 
       {/* Legend */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 pt-4 border-t border-slate-50">
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 pt-4 border-t border-slate-200/80">
         {(Object.entries(statusLabels) as [ToothStatus, string][]).map(([status, label]) => (
-          <div key={status} className="flex items-center gap-2">
+          <div key={status} className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/80 border border-slate-200/80 transition-all duration-200 hover:bg-white hover:shadow-sm">
             <div className={`w-2.5 h-2.5 rounded-full border-none ${statusColors[status].split(' ')[0]}`} />
-            <span className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider leading-tight">{label}</span>
+            <span className="text-[9px] font-bold text-slate-700 uppercase tracking-wider leading-tight">{label}</span>
           </div>
         ))}
       </div>
