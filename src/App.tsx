@@ -333,6 +333,11 @@ const ClinicalPageRoute = ({ transactions, appointments, onUpdatePatient, onUpda
   );
 };
 
+const LegacyClinicalRedirect = () => {
+  const { id } = useParams();
+  return <Navigate to={id ? `/prontuario/${id}` : '/'} replace />;
+};
+
 export default function App() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin'>('dashboard');
@@ -1771,7 +1776,7 @@ export default function App() {
       const res = await apiFetch(`/api/patients/${id}`);
       const data = await res.json();
       setSelectedPatient(data);
-      navigate(`/pacientes/${id}/clinico`);
+      navigate(`/prontuario/${id}`);
     } catch (error) {
       console.error('Error fetching patient record:', error);
     }
@@ -2007,7 +2012,7 @@ export default function App() {
     <Routes>
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/pacientes/:id/clinico" element={
+      <Route path="/prontuario/:id" element={
         user ? (
           <div className="min-h-screen bg-[#F8FAFC] flex font-sans text-slate-900 relative overflow-x-hidden">
             {/* Mobile Sidebar Overlay */}
@@ -2065,6 +2070,7 @@ export default function App() {
           </div>
         ) : <Navigate to="/" />
       } />
+      <Route path="/pacientes/:id/clinico" element={<LegacyClinicalRedirect />} />
       <Route path="/nova-evolucao" element={<NovaEvolucao />} />
       <Route path="/termos" element={<TermsPage />} />
       <Route path="/privacidade" element={<PrivacyPage />} />
@@ -2377,6 +2383,11 @@ export default function App() {
                           </div>
                         </div>
                         <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSearchTerm('');
+                            openPatientRecord(p.id);
+                          }}
                           className="text-xs font-bold text-primary hover:underline"
                         >
                           Ver Prontuário
@@ -2589,7 +2600,7 @@ export default function App() {
                                   onClick={() => {
                                     const patient = patients.find(p => p.id === app.patient_id);
                                     if (patient) openPatientRecord(patient.id);
-                                    navigate(`/pacientes/${app.patient_id}/clinico`);
+                                    navigate(`/prontuario/${app.patient_id}`);
                                   }}
                                   className="flex-1 sm:flex-none bg-primary text-white px-4 py-2.5 rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all active:scale-95"
                                 >
@@ -3131,7 +3142,7 @@ export default function App() {
                                           onClick={() => {
                                             const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
                                             if (patient) openPatientRecord(patient.id);
-                                            navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
+                                            navigate(`/prontuario/${weekSheetSelectedAppointment.patient_id}`);
                                             setWeekSheetSelectedAppointment(null);
                                           }}
                                           className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all"
@@ -3431,7 +3442,7 @@ export default function App() {
                                           onClick={() => {
                                             const patient = patients.find(p => p.id === weekSheetSelectedAppointment.patient_id);
                                             if (patient) openPatientRecord(patient.id);
-                                            navigate(`/pacientes/${weekSheetSelectedAppointment.patient_id}/clinico`);
+                                            navigate(`/prontuario/${weekSheetSelectedAppointment.patient_id}`);
                                             setWeekSheetSelectedAppointment(null);
                                           }}
                                           className="w-full bg-primary text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-all"
@@ -3670,7 +3681,7 @@ export default function App() {
                                                   onClick={() => {
                                                     const patient = patients.find(p => p.id === app.patient_id);
                                                     if (patient) openPatientRecord(patient.id);
-                                                    navigate(`/pacientes/${app.patient_id}/clinico`);
+                                                    navigate(`/prontuario/${app.patient_id}`);
                                                     setMonthSheetSelectedDay(null);
                                                   }}
                                                   className="px-3 py-1.5 bg-primary text-white rounded-full text-xs font-bold hover:opacity-90 transition-all shrink-0"
@@ -4202,590 +4213,6 @@ export default function App() {
               </div>
             )}
 
-            {activeTab === 'prontuario' && selectedPatient && (
-              <div className="space-y-8 pt-10">
-                <div className="space-y-1.5 mb-4">
-                  <h3 className="text-[28px] font-bold tracking-tight text-[#1C1C1E] truncate">Prontuário: {selectedPatient.name}</h3>
-                  <p className="text-[17px] font-medium text-[#8E8E93]">Linha clínica e decisões do paciente</p>
-                </div>
-
-                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-full w-fit">
-                  <button 
-                    onClick={() => setActiveTab('pacientes')}
-                    className="p-2 bg-white shadow-sm rounded-full text-slate-500 hover:text-slate-700 transition-colors"
-                  >
-                    <ChevronRight size={20} className="rotate-180 md:hidden" />
-                    <ChevronRight size={24} className="rotate-180 hidden md:block" />
-                  </button>
-                  <span className="text-sm font-medium text-slate-500 pr-3">Voltar para pacientes</span>
-                </div>
-
-                {(() => {
-                  const meta = getPatientCardMeta(selectedPatient);
-                  const pendingProceduresCount = (selectedPatient.treatmentPlan || []).filter(
-                    plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO'
-                  ).length;
-
-                  return (
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 md:gap-3">
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Status clínico</p>
-                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.clinicalStatus}</p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Próxima consulta</p>
-                          <p className="text-sm font-semibold text-slate-700 mt-1">{meta.nextVisitLabel || 'Sem consulta agendada'}</p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Procedimentos pendentes</p>
-                          <p className="text-sm font-semibold text-slate-700 mt-1">{pendingProceduresCount}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 md:p-4">
-                  <div className="flex flex-col sm:flex-row gap-2.5 bg-slate-100 p-1 rounded-2xl">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPatientTab('evolucao');
-                        setIsEvolutionFormOpen(true);
-                      }}
-                      className="px-4 py-2.5 rounded-full bg-white shadow-sm text-primary text-sm font-semibold hover:opacity-90 transition-colors w-full sm:w-auto"
-                    >
-                      Nova evolução
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowTreatmentPlanSummary(true)}
-                      className="px-4 py-2.5 rounded-full text-slate-600 text-sm font-semibold hover:text-slate-800 transition-colors w-full sm:w-auto"
-                    >
-                      Ver plano de tratamento
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  {/* Sidebar: Patient Info & Anamnesis */}
-                  <div className="space-y-4 flex flex-col order-2 lg:order-2">
-                    <div className="order-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
-                      <div className="flex flex-col items-center mb-6">
-                        <div className="relative group">
-                          <div className="w-24 h-24 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-200 group-hover:border-primary transition-all">
-                            {selectedPatient.photo_url ? (
-                              <img 
-                                src={selectedPatient.photo_url} 
-                                alt={selectedPatient.name} 
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <UserCircle size={48} />
-                            )}
-                          </div>
-                          <label className="absolute -bottom-2 -right-2 p-2 bg-primary text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-all">
-                            <Camera size={16} />
-                            <input 
-                              type="file" 
-                              className="hidden" 
-                              accept="image/*"
-                              onChange={handlePatientPhotoUpload}
-                            />
-                          </label>
-                        </div>
-                      </div>
-                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <UserCircle size={18} className="text-primary" />
-                        Dados Pessoais
-                      </h4>
-                      <div className="space-y-3 text-sm">
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">CPF</span> {selectedPatient.cpf || '---'}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Nascimento</span> {formatDate(selectedPatient.birth_date) || '---'}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Telefone</span> {selectedPatient.phone}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">E-mail</span> {selectedPatient.email}</p>
-                        <p><span className="text-slate-400 font-medium uppercase text-[10px] block">Endereço</span> {selectedPatient.address || '---'}</p>
-                      </div>
-                    </div>
-
-                    <div className="order-1 bg-slate-50/70 p-4 rounded-2xl border border-slate-200 shadow-none">
-                      <div className="flex items-center justify-between mb-4">
-                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                          <AlertCircle size={18} className="text-rose-500" />
-                          Anamnese
-                        </h4>
-                        <button
-                          type="button"
-                          onClick={() => setIsAnamnesisEditing(prev => !prev)}
-                          className="text-[11px] font-semibold text-primary hover:underline"
-                        >
-                          {isAnamnesisEditing ? 'Fechar edição' : 'Editar'}
-                        </button>
-                      </div>
-
-                      {!isAnamnesisEditing && (
-                        <ul className="space-y-2 text-sm text-slate-700">
-                          <li className="leading-relaxed"><span className="text-slate-400">• Histórico:</span> {selectedPatient.anamnesis?.medical_history || 'Sem registros relevantes'}</li>
-                          <li className="leading-relaxed"><span className="text-slate-400">• Alergias:</span> {selectedPatient.anamnesis?.allergies || 'Nenhuma alergia registrada'}</li>
-                          <li className="leading-relaxed"><span className="text-slate-400">• Medicações:</span> {selectedPatient.anamnesis?.medications || 'Sem medicação em uso registrada'}</li>
-                        </ul>
-                      )}
-
-                      {isAnamnesisEditing && (
-                        <form onSubmit={saveAnamnesis} className="space-y-4">
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Histórico Médico</label>
-                            <textarea 
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                              rows={3}
-                              value={selectedPatient.anamnesis?.medical_history || ''}
-                              onChange={(e) => setSelectedPatient({
-                                ...selectedPatient, 
-                                anamnesis: { 
-                                  allergies: '', 
-                                  medications: '', 
-                                  ...selectedPatient.anamnesis, 
-                                  medical_history: e.target.value 
-                                }
-                              })}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Alergias</label>
-                            <textarea 
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                              rows={2}
-                              value={selectedPatient.anamnesis?.allergies || ''}
-                              onChange={(e) => setSelectedPatient({
-                                ...selectedPatient, 
-                                anamnesis: { 
-                                  medical_history: '', 
-                                  medications: '', 
-                                  ...selectedPatient.anamnesis, 
-                                  allergies: e.target.value 
-                                }
-                              })}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Medicações</label>
-                            <textarea 
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                              rows={2}
-                              value={selectedPatient.anamnesis?.medications || ''}
-                              onChange={(e) => setSelectedPatient({
-                                ...selectedPatient, 
-                                anamnesis: { 
-                                  medical_history: '', 
-                                  allergies: '', 
-                                  ...selectedPatient.anamnesis, 
-                                  medications: e.target.value 
-                                }
-                              })}
-                            />
-                          </div>
-                          <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors">
-                            Salvar Anamnese
-                          </button>
-                        </form>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Main: Evolution & Odontogram Placeholder */}
-                  <div className="lg:col-span-2 space-y-8 order-1 lg:order-1">
-                    {/* Tabs for Patient Record */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="px-4 pt-4 pb-3 border-b border-slate-100">
-                        <div className="flex bg-slate-100 p-1 rounded-full w-fit max-w-full overflow-x-auto">
-                          {['evolucao', 'imagens', 'financeiro'].map((tab) => (
-                            <button
-                              key={tab}
-                              onClick={() => setSelectedPatientTab(tab as any)}
-                              className={`px-5 py-2 text-sm font-bold rounded-full transition-all whitespace-nowrap ${
-                                selectedPatientTab === tab
-                                  ? 'bg-white shadow-sm text-primary'
-                                  : 'text-slate-500 hover:text-slate-700'
-                              }`}
-                            >
-                              {tab === 'evolucao' ? 'Evolução Clínica' : tab === 'imagens' ? 'Imagens & RX' : 'Financeiro'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="p-6">
-                        {selectedPatientTab === 'evolucao' ? (
-                          <>
-                            <div className="flex justify-between items-center mb-6">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ClipboardList size={18} className="text-primary" />
-                                Histórico de Evolução
-                              </h4>
-                              <button 
-                                onClick={() => setIsEvolutionFormOpen(!isEvolutionFormOpen)}
-                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
-                              >
-                                <Plus size={14} className={isEvolutionFormOpen ? 'rotate-45' : ''} /> 
-                                {isEvolutionFormOpen ? 'Cancelar' : 'Nova Evolução'}
-                              </button>
-                            </div>
-
-                            <AnimatePresence>
-                              {isEvolutionFormOpen && (
-                                <motion.div 
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  className="overflow-hidden mb-6"
-                                >
-                                  <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Procedimento</label>
-                                        <input 
-                                          type="text"
-                                          placeholder="Ex: Limpeza, Restauração..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                                          value={newEvolution.procedure}
-                                          onChange={(e) => setNewEvolution({...newEvolution, procedure: e.target.value})}
-                                        />
-                                      </div>
-                                      <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Notas</label>
-                                        <textarea 
-                                          placeholder="Descreva a evolução do paciente..."
-                                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-                                          rows={2}
-                                          value={newEvolution.notes || ''}
-                                          onChange={(e) => setNewEvolution({...newEvolution, notes: e.target.value})}
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-end gap-2">
-                                      <button 
-                                        onClick={() => setIsEvolutionFormOpen(false)}
-                                        className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
-                                      >
-                                        Cancelar
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          if (newEvolution.notes || newEvolution.procedure) {
-                                            addEvolution({ notes: newEvolution.notes, procedure: newEvolution.procedure });
-                                            setNewEvolution({ notes: '', procedure: '' });
-                                            setIsEvolutionFormOpen(false);
-                                          } else {
-                                            alert('Preencha pelo menos um campo (Procedimento ou Notas).');
-                                          }
-                                        }}
-                                        className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors"
-                                      >
-                                        Adicionar Registro
-                                      </button>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-
-                            <div className="space-y-5">
-                              {(() => {
-                                const evolutionEntries = [...(selectedPatient.evolution || [])]
-                                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                                if (evolutionEntries.length === 0) {
-                                  return (
-                                    <div className="text-center py-12 text-slate-400">
-                                      <ClipboardList size={48} className="mx-auto mb-4 opacity-20" />
-                                      <p>Nenhum registro de evolução clínica.</p>
-                                    </div>
-                                  );
-                                }
-
-                                const groups = evolutionEntries.reduce((acc, evo) => {
-                                  const key = getRelativeDayLabel(evo.date);
-                                  if (!acc[key]) acc[key] = [];
-                                  acc[key].push(evo);
-                                  return acc;
-                                }, {} as Record<string, typeof evolutionEntries>);
-
-                                return Object.entries(groups).map(([groupLabel, entries]: [string, typeof evolutionEntries]) => (
-                                  <div key={groupLabel} className="space-y-2">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">{groupLabel}</p>
-                                    <div className="space-y-2">
-                                      {entries.map(evo => (
-                                        <div key={evo.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                          <div className="flex justify-between items-start gap-2 mb-1.5">
-                                            <span className="text-[10px] text-slate-400 font-semibold uppercase">{formatDate(evo.date)}</span>
-                                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                                              {evo.procedure_performed || 'Registro'}
-                                            </span>
-                                          </div>
-                                          <p className="text-sm text-slate-700 leading-relaxed">{evo.notes || 'Sem observações'}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ));
-                              })()}
-                            </div>
-                          </>
-                        ) : selectedPatientTab === 'imagens' ? (
-                          <div className="space-y-6">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <ImageIcon size={18} className="text-primary" />
-                                Imagens e Exames (RX)
-                              </h4>
-                              <button 
-                                onClick={() => setIsImageModalOpen(true)}
-                                className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-colors flex items-center gap-2"
-                              >
-                                <Upload size={14} />
-                                Upload
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                              {selectedPatient.files && selectedPatient.files.length > 0 ? (
-                                selectedPatient.files.map((file) => (
-                                  <div key={file.id} className="group relative bg-slate-50 rounded-xl border border-slate-100 overflow-hidden aspect-square">
-                                    <img 
-                                      src={file.file_url} 
-                                      alt={file.description} 
-                                      className="w-full h-full object-cover"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-4 text-center">
-                                      <p className="text-white text-xs font-bold mb-2">{file.description}</p>
-                                      <div className="flex gap-2">
-                                        <button 
-                                          onClick={() => window.open(file.file_url, '_blank')}
-                                          className="p-2 bg-white/20 hover:bg-white/40 rounded-lg text-white transition-colors"
-                                        >
-                                          <Search size={14} />
-                                        </button>
-                                        <button 
-                                          onClick={() => deleteFile(file.id)}
-                                          className="p-2 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white transition-colors"
-                                        >
-                                          <Trash2 size={14} />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="col-span-full py-12 text-center text-slate-400">
-                                  <ImageIcon size={48} className="mx-auto mb-4 opacity-20" />
-                                  <p>Nenhuma imagem ou exame anexado.</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-8">
-                            <div className="flex justify-between items-center">
-                              <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                                <DollarSign size={18} className="text-primary" />
-                                Financeiro do paciente
-                              </h4>
-                              <button 
-                                onClick={() => {
-                                  setNewPaymentPlan({...newPaymentPlan, patient_id: selectedPatient.id.toString()});
-                                  setIsPaymentPlanModalOpen(true);
-                                }}
-                                className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
-                              >
-                                <Plus size={14} /> 
-                                Novo parcelamento
-                              </button>
-                            </div>
-
-                            {/* Payment Plans */}
-                            <div className="space-y-4">
-                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Planos de Pagamento</h5>
-                              {selectedPatient.financial?.paymentPlans && selectedPatient.financial.paymentPlans.length > 0 ? (
-                                selectedPatient.financial.paymentPlans.map(plan => {
-                                  const planInstallments = selectedPatient.financial?.installments.filter(i => i.payment_plan_id === plan.id) || [];
-                                  const hasOverdue = planInstallments.some(i => i.status === 'PENDING' && isOverdue(i.due_date));
-                                  
-                                  return (
-                                    <div key={plan.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                                      <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                          <p className="font-bold text-slate-800">{plan.procedure}</p>
-                                          <p className="text-xs text-slate-500">
-                                            Total: {Number(plan.total_amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} • {plan.installments_count} parcelas
-                                          </p>
-                                        </div>
-                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                          plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 
-                                          plan.status === 'CANCELLED' ? 'bg-slate-200 text-slate-600' : 
-                                          hasOverdue ? 'bg-rose-100 text-rose-700' :
-                                          'bg-blue-100 text-blue-700'
-                                        }`}>
-                                          {plan.status === 'COMPLETED' ? 'Concluído' : 
-                                           plan.status === 'CANCELLED' ? 'Cancelado' : 
-                                           hasOverdue ? 'Atrasado' : 'Em Aberto'}
-                                        </span>
-                                      </div>
-                                      
-                                      <div className="space-y-2">
-                                        {planInstallments.map(inst => (
-                                          <div key={inst.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-100 text-sm">
-                                            <div className="flex items-center gap-3">
-                                              <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center text-[10px] font-bold">
-                                                {inst.number}
-                                              </span>
-                                              <div>
-                                                <p className="font-medium text-slate-700">{Number(inst.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase">Vencimento: {formatDate(inst.due_date)}</p>
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                inst.status === 'PAID' ? 'bg-primary/10 text-primary' : 
-                                                isOverdue(inst.due_date) ? 'bg-rose-100 text-rose-700' : 
-                                                'bg-amber-100 text-amber-700'
-                                              }`}>
-                                                {inst.status === 'PAID' ? 'Pago' : isOverdue(inst.due_date) ? 'Atrasado' : 'Pendente'}
-                                              </span>
-                                              {inst.status === 'PENDING' && (
-                                                <button 
-                                                  onClick={() => handlePayInstallment(inst.id, 'Dinheiro')}
-                                                  className="text-[10px] font-bold text-primary hover:underline"
-                                                >
-                                                  Pagar
-                                                </button>
-                                              )}
-                                              {inst.status === 'PAID' && inst.transaction_id && (
-                                                <button 
-                                                  onClick={() => {
-                                                    const trans = selectedPatient.financial?.transactions.find(t => t.id === inst.transaction_id);
-                                                    if (trans) generateReceipt(trans);
-                                                  }}
-                                                  className="text-[10px] font-bold text-blue-600 hover:underline"
-                                                >
-                                                  Recibo
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <div className="py-8 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                                  <DollarSign size={32} className="mx-auto mb-2 opacity-20" />
-                                  <p className="text-sm">Nenhum plano de parcelamento ativo.</p>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Recent Transactions */}
-                            <div className="space-y-4">
-                              <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pagamentos Recentes</h5>
-                              <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden overflow-x-auto">
-                                <table className="w-full text-left text-sm min-w-[500px]">
-                                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-400 uppercase">
-                                    <tr>
-                                      <th className="px-4 py-3">Data</th>
-                                      <th className="px-4 py-3">Descrição</th>
-                                      <th className="px-4 py-3 text-right">Valor</th>
-                                      <th className="px-4 py-3"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100">
-                                    {selectedPatient.financial?.transactions.map(t => (
-                                      <tr key={t.id} className="hover:bg-slate-50">
-                                        <td className="px-4 py-3 text-slate-500">{formatDate(t.date)}</td>
-                                        <td className="px-4 py-3 font-medium text-slate-700">{t.description}</td>
-                                        <td className={`px-4 py-3 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
-                                          {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                        </td>
-                                        <td className="px-4 py-3 text-right">
-                                          <button 
-                                            onClick={() => generateReceipt(t)}
-                                            className="p-1.5 text-slate-400 hover:text-primary transition-colors"
-                                            title="Gerar Recibo"
-                                          >
-                                            <FileText size={16} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                    {(!selectedPatient.financial?.transactions || selectedPatient.financial.transactions.length === 0) && (
-                                      <tr>
-                                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400">Nenhuma transação registrada.</td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Odontogram */}
-                    <div className="bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
-                        <div>
-                          <h4 className="text-xl font-bold text-slate-800">Odontograma Interativo</h4>
-                          <p className="text-sm text-slate-500 mt-1">
-                            {Object.values(selectedPatient.odontogram || {}).filter((tooth: any) => {
-                              const status = (tooth?.status || '').toLowerCase();
-                              return !!status && !['normal', 'saudavel', 'saudável', 'healthy'].includes(status);
-                            }).length} dentes com problemas
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <button
-                            type="button"
-                            onClick={() => setShowTreatmentPlanSummary(prev => !prev)}
-                            className="px-3 py-2 rounded-xl text-xs font-semibold text-primary border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors w-full sm:w-auto"
-                          >
-                            Ver plano de tratamento
-                          </button>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:inline">Clique no dente</span>
-                        </div>
-                      </div>
-
-                      {showTreatmentPlanSummary && (
-                        <div className="mb-5 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                          {(selectedPatient.treatmentPlan || []).filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO').length > 0 ? (
-                            <ul className="space-y-1.5 text-sm text-slate-700">
-                              {(selectedPatient.treatmentPlan || [])
-                                .filter(plan => plan.status === 'PLANEJADO' || plan.status === 'APROVADO')
-                                .slice(0, 5)
-                                .map(plan => (
-                                  <li key={plan.id} className="leading-relaxed">• {plan.procedure} {plan.tooth_number ? `(dente ${plan.tooth_number})` : ''}</li>
-                                ))}
-                            </ul>
-                          ) : (
-                            <p className="text-sm text-slate-500">Nenhum procedimento pendente no plano de tratamento.</p>
-                          )}
-                        </div>
-                      )}
-
-                      <Odontogram 
-                        data={selectedPatient.odontogram || {}} 
-                        history={selectedPatient.toothHistory || []}
-                        onChange={saveOdontogram} 
-                        onAddHistory={addToothHistory}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
             {activeTab === 'financeiro' && (
               <div className="space-y-6">
                 <div className="mb-6 space-y-4">
