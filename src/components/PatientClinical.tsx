@@ -1,7 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  ArrowDownRight,
   ArrowLeft,
+  ArrowUpRight,
   Calendar,
   Camera,
   CheckCircle2,
@@ -13,6 +15,7 @@ import {
   Phone,
   User,
   UserRound,
+  WalletCards,
   Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -192,10 +195,28 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   const [isUploadingProfilePhoto, setIsUploadingProfilePhoto] = useState(false);
   const [isUploadingClinicalImage, setIsUploadingClinicalImage] = useState(false);
   const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
+  const [patientFinancial, setPatientFinancial] = useState<{ transactions: any[]; paymentPlans: any[]; installments: any[] } | null>(null);
+  const [isLoadingFinancial, setIsLoadingFinancial] = useState(false);
   const infoPanelRef = useRef<HTMLElement | null>(null);
   const odontogramRef = useRef<HTMLElement | null>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const clinicalImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (infoTab !== 'financeiro' || !patient?.id) return;
+    let cancelled = false;
+    setIsLoadingFinancial(true);
+    apiFetch(`/api/patients/${patient.id}/financial`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setPatientFinancial(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsLoadingFinancial(false);
+      });
+    return () => { cancelled = true; };
+  }, [infoTab, patient?.id]);
 
   const age = getAge(patient?.birth_date);
   const clinicalStatus = resolveClinicalStatus(patient, appointments);
@@ -481,6 +502,38 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
     try {
       await onUpdatePatient(updatedPatient);
+
+      // Criar transação financeira automaticamente ao concluir via odontograma
+      if (isCompletionAction && existingTreatment) {
+        const treatmentValue = Number(existingTreatment.value) || 0;
+        if (treatmentValue > 0) {
+          const procedureLabel = existingTreatment.procedure || procedure || 'Procedimento';
+          apiFetch('/api/finance', {
+            method: 'POST',
+            body: JSON.stringify({
+              type: 'INCOME',
+              description: `${procedureLabel} — dente ${toothNumber}`,
+              category: 'Procedimentos',
+              amount: treatmentValue,
+              payment_method: 'Indefinido',
+              date: nowIso.split('T')[0],
+              status: 'PAID',
+              patient_id: patient.id,
+              procedure: procedureLabel,
+              notes: `Gerado automaticamente ao concluir procedimento.`,
+            }),
+          }).then(() => {
+            if (infoTab === 'financeiro') {
+              apiFetch(`/api/patients/${patient.id}/financial`)
+                .then((r) => r.json())
+                .then((data) => setPatientFinancial(data))
+                .catch(() => {});
+            }
+          }).catch((err) => {
+            console.error('Error creating auto transaction from odontogram:', err);
+          });
+        }
+      }
     } catch (error) {
       console.error('Error applying odontogram action:', error);
     }
@@ -536,6 +589,38 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
     try {
       await onUpdatePatient(updatedPatient);
+
+      // Criar transação financeira automaticamente
+      const treatmentValue = Number(treatment.value) || 0;
+      if (treatmentValue > 0) {
+        const procedureLabel = treatment.procedure || 'Procedimento';
+        const toothLabel = treatment.tooth_number ? ` — dente ${treatment.tooth_number}` : '';
+        apiFetch('/api/finance', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'INCOME',
+            description: `${procedureLabel}${toothLabel}`,
+            category: 'Procedimentos',
+            amount: treatmentValue,
+            payment_method: 'Indefinido',
+            date: nowIso.split('T')[0],
+            status: 'PAID',
+            patient_id: patient.id,
+            procedure: procedureLabel,
+            notes: `Gerado automaticamente ao concluir procedimento.`,
+          }),
+        }).then(() => {
+          // Atualizar dados financeiros se aba estiver aberta
+          if (infoTab === 'financeiro') {
+            apiFetch(`/api/patients/${patient.id}/financial`)
+              .then((r) => r.json())
+              .then((data) => setPatientFinancial(data))
+              .catch(() => {});
+          }
+        }).catch((err) => {
+          console.error('Error creating auto transaction:', err);
+        });
+      }
     } catch (error) {
       console.error('Error completing treatment:', error);
     }
@@ -1258,18 +1343,112 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
             {infoTab === 'financeiro' && (
               <div className="space-y-3">
-                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Orçado</p>
-                  <p className="text-lg font-semibold text-slate-950 mt-1">
-                    {financialTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </p>
+                {/* Resumo do plano de tratamento */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={`p-3 rounded-[18px] ${iosSubtleCard}`}>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">Orçado</p>
+                    <p className="text-[15px] font-semibold text-slate-950 mt-0.5">
+                      {financialTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </p>
+                  </div>
+                  <div className={`p-3 rounded-[18px] ${iosSubtleCard}`}>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">Concluído</p>
+                    <p className="text-[15px] font-semibold text-slate-950 mt-0.5">
+                      {completedTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </p>
+                  </div>
                 </div>
-                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Concluído</p>
-                  <p className="text-lg font-semibold text-slate-950 mt-1">
-                    {completedTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </p>
-                </div>
+
+                {/* Recebido vs Orçado */}
+                {(() => {
+                  const received = (patientFinancial?.transactions || [])
+                    .filter((t: any) => t.type === 'INCOME')
+                    .reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+                  const pct = financialTotal > 0 ? Math.min(100, Math.round((received / financialTotal) * 100)) : 0;
+                  return (
+                    <div className={`p-3 rounded-[18px] ${iosSubtleCard}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">Recebido</p>
+                        <span className="text-[11px] font-semibold text-slate-500">{pct}%</span>
+                      </div>
+                      <p className="text-[15px] font-semibold text-emerald-700">
+                        {received.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </p>
+                      <div className="mt-2 h-1.5 rounded-full bg-slate-200/80 overflow-hidden">
+                        <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Parcelas pendentes */}
+                {(() => {
+                  const pending = (patientFinancial?.installments || []).filter((i: any) => i.status === 'PENDING' || i.status === 'OVERDUE');
+                  if (pending.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold px-1 mb-1.5">Parcelas pendentes</p>
+                      <div className="space-y-1.5">
+                        {pending.slice(0, 5).map((inst: any) => {
+                          const isOverdue = inst.status === 'OVERDUE' || new Date(inst.due_date) < new Date();
+                          return (
+                            <div key={inst.id} className={`flex items-center gap-2.5 p-2.5 rounded-[16px] ${iosSubtleCard}`}>
+                              <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${isOverdue ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
+                                <WalletCards size={13} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[13px] font-medium text-slate-800 truncate">{inst.procedure || `Parcela ${inst.number}`}</p>
+                                <p className={`text-[11px] ${isOverdue ? 'text-rose-500 font-semibold' : 'text-slate-500'}`}>
+                                  {isOverdue ? 'Vencida' : 'Vence'} {formatDate(inst.due_date)}
+                                </p>
+                              </div>
+                              <span className="text-[13px] font-semibold text-slate-800 shrink-0">
+                                {Number(inst.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {pending.length > 5 && (
+                          <p className="text-[11px] text-slate-400 text-center">+{pending.length - 5} parcelas</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Movimentações do paciente */}
+                {isLoadingFinancial ? (
+                  <div className={`p-6 rounded-[18px] text-center text-sm text-slate-500 ${iosSubtleCard}`}>Carregando...</div>
+                ) : (patientFinancial?.transactions || []).length > 0 ? (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold px-1 mb-1.5">Movimentações</p>
+                    <div className="space-y-1.5">
+                      {patientFinancial!.transactions.slice(0, 8).map((t: any) => {
+                        const isIncome = t.type === 'INCOME';
+                        return (
+                          <div key={t.id} className={`flex items-center gap-2.5 p-2.5 rounded-[16px] ${iosSubtleCard}`}>
+                            <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${isIncome ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                              {isIncome ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] font-medium text-slate-800 truncate">{t.procedure || t.description}</p>
+                              <p className="text-[11px] text-slate-500">{formatDate(t.date)}</p>
+                            </div>
+                            <span className={`text-[13px] font-semibold shrink-0 ${isIncome ? 'text-emerald-700' : 'text-rose-600'}`}>
+                              {isIncome ? '+' : '-'}{Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {patientFinancial!.transactions.length > 8 && (
+                        <p className="text-[11px] text-slate-400 text-center">+{patientFinancial!.transactions.length - 8} movimentações</p>
+                      )}
+                    </div>
+                  </div>
+                ) : !isLoadingFinancial && patientFinancial ? (
+                  <div className={`p-6 rounded-[18px] text-center text-sm text-slate-500 ${iosSubtleCard}`}>Nenhuma movimentação registrada</div>
+                ) : null}
+
                 <button
                   onClick={() => {
                     setAppActiveTab('financeiro');
