@@ -47,6 +47,7 @@ import { PatientClinical } from './components/PatientClinical';
 import { TermsPage, PrivacyPage } from './components/LegalPages';
 import { NovaEvolucao } from './components/NovaEvolucao';
 import { Dashboard } from './components/Dashboard';
+import { Finance } from './components/Finance';
 import { formatDate, isOverdue, getFreeSlots, getSuggestion, FreeSlot } from './utils/dateUtils';
 
 // Types
@@ -575,12 +576,6 @@ export default function App() {
     procedure: '',
     notes: ''
   });
-  const [financeFilter, setFinanceFilter] = useState({
-    period: 'month', // 'day', 'week', 'month', 'all'
-    type: 'all', // 'all', 'INCOME', 'EXPENSE'
-    category: 'all'
-  });
-  const [financeSubTab, setFinanceSubTab] = useState<'transacoes' | 'parcelamentos'>('transacoes');
 
   const [profile, setProfile] = useState<Dentist | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -1036,70 +1031,10 @@ export default function App() {
     setLoading(true);
   };
 
-  const filteredTransactions = transactions.filter(t => {
-    if (financeFilter.type !== 'all' && t.type !== financeFilter.type) return false;
-    if (financeFilter.category !== 'all' && t.category !== financeFilter.category) return false;
-    
-    const tDateStr = t.date?.split('T')[0];
-    const nowLocalStr = new Date().toLocaleDateString('en-CA');
-    
-    if (financeFilter.period === 'day') {
-      return tDateStr === nowLocalStr;
-    } else if (financeFilter.period === 'week') {
-      const tDate = new Date(tDateStr + 'T12:00:00'); // Use mid-day local to avoid shifts
-      const now = new Date();
-      const weekAgo = new Date();
-      weekAgo.setDate(now.getDate() - 7);
-      return tDate >= weekAgo;
-    } else if (financeFilter.period === 'month') {
-      const [year, month] = tDateStr.split('-');
-      const now = new Date();
-      return parseInt(month) === (now.getMonth() + 1) && parseInt(year) === now.getFullYear();
-    }
-    return true;
-  });
-
-  const currentTotalIncome = filteredTransactions
-    .filter(t => t.type === 'INCOME')
-    .reduce((acc, t) => acc + Number(t.amount), 0);
-
-  const currentTotalExpense = filteredTransactions
-    .filter(t => t.type === 'EXPENSE')
-    .reduce((acc, t) => acc + Number(t.amount), 0);
-
-  const currentNetProfit = currentTotalIncome - currentTotalExpense;
-  const currentProfitMargin = currentTotalIncome > 0 ? (currentNetProfit / currentTotalIncome) * 100 : 0;
-
   // Dashboard Stats Calculations
   const dashboardNow = new Date();
   const dashboardMonth = dashboardNow.getMonth();
   const dashboardYear = dashboardNow.getFullYear();
-
-  const monthlyRevenue = transactions
-    .filter(t => {
-      const tDateStr = t.date?.split('T')[0];
-      if (!tDateStr) return false;
-      const [year, month] = tDateStr.split('-');
-      return t.type === 'INCOME' && parseInt(month) === (dashboardMonth + 1) && parseInt(year) === dashboardYear;
-    })
-    .reduce((acc, t) => acc + Number(t.amount), 0);
-
-  const prevMonthDate = new Date(dashboardYear, dashboardMonth - 1, 1);
-  const prevMonth = prevMonthDate.getMonth();
-  const prevMonthYear = prevMonthDate.getFullYear();
-
-  const prevMonthlyRevenue = transactions
-    .filter(t => {
-      const tDateStr = t.date?.split('T')[0];
-      if (!tDateStr) return false;
-      const [year, month] = tDateStr.split('-');
-      return t.type === 'INCOME' && parseInt(month) === (prevMonth + 1) && parseInt(year) === prevMonthYear;
-    })
-    .reduce((acc, t) => acc + Number(t.amount), 0);
-
-  const revenueVariation = prevMonthlyRevenue > 0 
-    ? ((monthlyRevenue - prevMonthlyRevenue) / prevMonthlyRevenue) * 100 
-    : 0;
 
   const startOfWeek = new Date(dashboardNow);
   startOfWeek.setDate(dashboardNow.getDate() - dashboardNow.getDay());
@@ -2376,7 +2311,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full max-w-full print:p-0 pb-24 md:pb-8">
+      <main className="flex-1 p-4 md:p-6 lg:p-8 w-full max-w-full print:p-0 pb-36 md:pb-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab + (searchTerm ? '-search' : '')}
@@ -4317,452 +4252,36 @@ export default function App() {
             )}
 
             {activeTab === 'financeiro' && (
-              <div className="space-y-6">
-                <div className="mb-6 space-y-4">
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Financeiro</h2>
-                    <p className="text-sm text-slate-500">Controle de transações e parcelamentos</p>
-                  </div>
-                  <div className="flex bg-slate-100 p-1 rounded-full w-fit">
-                    {['transacoes', 'parcelamentos'].map((subTab) => (
-                      <button
-                        key={subTab}
-                        onClick={() => setFinanceSubTab(subTab as any)}
-                        className={`px-5 py-2 text-sm font-bold rounded-full transition-all ${
-                          financeSubTab === subTab
-                            ? 'bg-white shadow-sm text-primary'
-                            : 'text-slate-500 hover:text-slate-700'
-                        }`}
-                      >
-                        {subTab === 'transacoes' ? 'Transações' : 'Parcelamentos'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {financeSubTab === 'transacoes' ? (
-                  <>
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto bg-slate-100 p-1 rounded-2xl">
-                        <select 
-                          value={financeFilter.period}
-                          onChange={(e) => setFinanceFilter({...financeFilter, period: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
-                        >
-                          <option value="day">Hoje</option>
-                          <option value="week">Últimos 7 dias</option>
-                          <option value="month">Este Mês</option>
-                          <option value="all">Tudo</option>
-                        </select>
-                        <select 
-                          value={financeFilter.type}
-                          onChange={(e) => setFinanceFilter({...financeFilter, type: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
-                        >
-                          <option value="all">Todos os Tipos</option>
-                          <option value="INCOME">Receitas</option>
-                          <option value="EXPENSE">Despesas</option>
-                        </select>
-                        <select 
-                          value={financeFilter.category}
-                          onChange={(e) => setFinanceFilter({...financeFilter, category: e.target.value})}
-                          className="bg-white border border-slate-200 rounded-full px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20 w-full sm:w-auto"
-                        >
-                          <option value="all">Todas Categorias</option>
-                          <option value="Procedimentos">Procedimentos</option>
-                          <option value="Consultas">Consultas</option>
-                          <option value="Aluguel">Aluguel</option>
-                          <option value="Materiais">Materiais</option>
-                          <option value="Laboratório">Laboratório</option>
-                          <option value="Marketing">Marketing</option>
-                          <option value="Salários">Salários</option>
-                          <option value="Outros">Outros</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                        <button 
-                          onClick={() => imprimirDocumento('relatorio')}
-                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-full font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                        >
-                          <Printer size={18} />
-                          Relatório
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setExportType('finance');
-                            setIsExportModalOpen(true);
-                          }}
-                          className="flex-1 sm:flex-none bg-white text-slate-600 border border-slate-200 px-6 py-2.5 rounded-full font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                        >
-                          <Download size={18} />
-                          Exportar
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setTransactionType('EXPENSE');
-                            setIsTransactionModalOpen(true);
-                          }}
-                          className="flex-1 sm:flex-none bg-rose-50 text-rose-600 px-6 py-2.5 rounded-full font-bold text-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                        >
-                          <Plus size={18} />
-                          Despesa
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setTransactionType('INCOME');
-                            setIsTransactionModalOpen(true);
-                          }}
-                          className="flex-1 sm:flex-none bg-primary text-white px-6 py-2.5 rounded-[30px] font-bold text-sm shadow-[0_8px_24px_rgba(38,78,54,0.12)] hover:opacity-90 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
-                        >
-                          <Plus size={18} />
-                          Receita
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <div className="flex items-center justify-between mb-4">
-                          <p className="text-xs font-bold text-slate-400 uppercase">Receita Total</p>
-                          <div className="w-8 h-8 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-                            <DollarSign size={16} />
-                          </div>
-                        </div>
-                        <h4 className="text-2xl font-bold text-slate-800">
-                          {currentTotalIncome.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-slate-400 font-bold mt-2 uppercase tracking-wider">No período selecionado</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <div className="flex items-center justify-between mb-4">
-                          <p className="text-xs font-bold text-slate-400 uppercase">Despesas</p>
-                          <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-lg flex items-center justify-center">
-                            <DollarSign size={16} />
-                          </div>
-                        </div>
-                        <h4 className="text-2xl font-bold text-slate-800">
-                          {currentTotalExpense.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-slate-400 font-bold mt-2 uppercase tracking-wider">No período selecionado</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <div className="flex items-center justify-between mb-4">
-                          <p className="text-xs font-bold text-slate-400 uppercase">Lucro Líquido</p>
-                          <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
-                            <DollarSign size={16} />
-                          </div>
-                        </div>
-                        <h4 className={`text-2xl font-bold ${currentNetProfit >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>
-                          {currentNetProfit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-blue-500 font-bold mt-2">Margem de {currentProfitMargin.toFixed(1)}%</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                        <h3 className="font-bold text-slate-800">Histórico Financeiro</h3>
-                        <span className="text-xs font-bold text-slate-400 uppercase">{filteredTransactions.length} transações</span>
-                      </div>
-                      
-                      {/* Desktop View */}
-                      <div className="hidden md:block">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-bold">
-                              <th className="px-6 py-4">Data</th>
-                              <th className="px-6 py-4">Descrição</th>
-                              <th className="px-6 py-4">Categoria</th>
-                              <th className="px-6 py-4">Pagamento</th>
-                              <th className="px-6 py-4 text-right">Valor</th>
-                              <th className="px-6 py-4"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {filteredTransactions.map((t) => (
-                              <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-6 py-4 text-sm text-slate-500">
-                                  {formatDate(t.date)}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <p className="font-bold text-slate-800">{t.description}</p>
-                                  {t.patient_name && <p className="text-[10px] text-slate-400 uppercase font-bold">Paciente: {t.patient_name}</p>}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className="px-2 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded uppercase">{t.category}</span>
-                                </td>
-                                <td className="px-6 py-4 text-xs text-slate-500 font-medium">
-                                  {t.payment_method}
-                                </td>
-                                <td className={`px-6 py-4 text-right font-bold ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
-                                  {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="flex justify-end gap-2">
-                                    <button 
-                                      onClick={() => generateReceipt(t)}
-                                      className="p-2 text-slate-300 hover:text-primary transition-colors"
-                                      title="Gerar Recibo"
-                                    >
-                                      <FileText size={16} />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleDeleteTransaction(t.id)}
-                                      className="p-2 text-slate-300 hover:text-rose-600 transition-colors"
-                                      title="Excluir"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                            {filteredTransactions.length === 0 && (
-                              <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                  Nenhuma transação encontrada no período.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Mobile View */}
-                      <div className="md:hidden divide-y divide-slate-100">
-                        {filteredTransactions.map((t) => (
-                          <div key={t.id} className="p-4 flex justify-between items-center">
-                            <div className="min-w-0 flex-1 pr-4">
-                              <p className="font-bold text-slate-800 text-sm truncate">{t.description}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-[10px] text-slate-400">{formatDate(t.date)}</span>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">• {t.category}</span>
-                              </div>
-                            </div>
-                            <div className="text-right flex items-center gap-3">
-                              <div>
-                                <p className={`font-bold text-sm ${t.type === 'INCOME' ? 'text-primary' : 'text-rose-600'}`}>
-                                  {t.type === 'INCOME' ? '+' : '-'} {Number(t.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                </p>
-                                <div className="flex justify-end gap-2 mt-1">
-                                  <button onClick={() => generateReceipt(t)} className="text-[10px] text-primary font-bold uppercase">Recibo</button>
-                                  <button onClick={() => handleDeleteTransaction(t.id)} className="text-[10px] text-rose-500 font-bold uppercase">Excluir</button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {filteredTransactions.length === 0 && (
-                          <div className="p-8 text-center text-slate-400">
-                            Nenhuma transação encontrada.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Total a Receber</p>
-                        <h4 className="text-xl font-bold text-slate-800">
-                          {(financialSummary?.pendingInstallmentsTotal || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-amber-600 font-bold mt-1 uppercase">{financialSummary?.pendingInstallmentsCount || 0} parcelas pendentes</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Total em Atraso</p>
-                        <h4 className="text-xl font-bold text-rose-600">
-                          {(financialSummary?.overdueInstallmentsTotal || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-rose-500 font-bold mt-1 uppercase">{financialSummary?.overdueInstallmentsCount || 0} parcelas atrasadas</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Recebido Hoje</p>
-                        <h4 className="text-xl font-bold text-primary">
-                          {(financialSummary?.todayRevenue || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-primary font-bold mt-1 uppercase">Pagamentos confirmados</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Receita Mensal</p>
-                        <h4 className="text-xl font-bold text-blue-600">
-                          {(financialSummary?.monthlyRevenue || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </h4>
-                        <p className="text-[10px] text-blue-500 font-bold mt-1 uppercase">Mês atual</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                        <h3 className="font-bold text-slate-800">Planos de Parcelamento Ativos</h3>
-                        <button 
-                          onClick={() => setIsPaymentPlanModalOpen(true)}
-                          className="text-xs font-bold text-primary flex items-center gap-1 hover:underline w-full sm:w-auto justify-center sm:justify-start py-2 sm:py-0 border sm:border-0 border-primary/10 rounded-lg sm:rounded-none"
-                        >
-                          <Plus size={14} /> Novo Plano
-                        </button>
-                      </div>
-                      
-                      <div className="hidden md:block w-full overflow-x-auto">
-                        <table className="w-full text-left border-collapse min-w-[700px]">
-                          <thead>
-                            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider font-bold">
-                              <th className="px-6 py-4">Paciente</th>
-                              <th className="px-6 py-4 hidden md:table-cell">Procedimento</th>
-                              <th className="px-6 py-4 hidden sm:table-cell">Progresso</th>
-                              <th className="px-6 py-4 text-right">Valor Total</th>
-                              <th className="px-6 py-4 hidden md:table-cell">Status</th>
-                              <th className="px-6 py-4 text-center">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {paymentPlans.map(plan => {
-                              const planInstallments = installments.filter(i => i.payment_plan_id === plan.id);
-                              const paidCount = planInstallments.filter(i => i.status === 'PAID').length;
-                              const progress = (paidCount / plan.installments_count) * 100;
-                              
-                              return (
-                                  <tr key={plan.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-6 py-4 font-bold text-slate-800 break-words">
-                                      {plan.patient?.name || plan.patient_name || "Paciente não identificado"}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm text-slate-600 break-words hidden md:table-cell">{plan.procedure}</td>
-                                  <td className="px-6 py-4 hidden sm:table-cell">
-                                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                      <div className="bg-primary h-full transition-all" style={{ width: `${progress}%` }} />
-                                    </div>
-                                    <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{paidCount}/{plan.installments_count} parcelas pagas</p>
-                                  </td>
-                                  <td className="px-6 py-4 text-right font-bold text-slate-700">
-                                    {Number(plan.total_amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                  </td>
-                                  <td className="px-6 py-4 hidden md:table-cell">
-                                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                      plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 'bg-blue-100 text-blue-700'
-                                    }`}>
-                                      {plan.status === 'COMPLETED' ? 'Concluído' : 'Em Aberto'}
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 text-center">
-                                    <div className="flex justify-center gap-2">
-                                      <button 
-                                        onClick={() => {
-                                          const nextInstallment = planInstallments.find(i => i.status === 'PENDING');
-                                          if (nextInstallment) {
-                                            setSelectedInstallment({...nextInstallment, procedure: plan.procedure, patient_name: plan.patient_name});
-                                            setIsReceiveInstallmentModalOpen(true);
-                                          } else {
-                                            alert('Todas as parcelas deste plano já foram pagas.');
-                                          }
-                                        }}
-                                        className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors"
-                                        title="Registrar recebimento"
-                                      >
-                                        <DollarSign size={16} />
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          setSelectedPlan(plan);
-                                          setIsViewInstallmentsModalOpen(true);
-                                        }}
-                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                        title="Ver Parcelas"
-                                      >
-                                        <ClipboardList size={16} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                            {paymentPlans.length === 0 && (
-                              <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center text-slate-400">Nenhum plano de parcelamento encontrado.</td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Mobile Card View */}
-                      <div className="md:hidden p-4 space-y-3 bg-slate-50/50">
-                        {paymentPlans.map(plan => {
-                          const planInstallments = installments.filter(i => i.payment_plan_id === plan.id);
-                          const paidCount = planInstallments.filter(i => i.status === 'PAID').length;
-                          const progress = (paidCount / plan.installments_count) * 100;
-                          
-                          return (
-                            <div key={plan.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                              <div className="flex justify-between items-start mb-3">
-                                <div className="max-w-[70%]">
-                                  <p className="font-bold text-slate-800 leading-tight mb-1">{plan.patient?.name || plan.patient_name || "Paciente não identificado"}</p>
-                                  <p className="text-xs text-slate-500 truncate">{plan.procedure}</p>
-                                </div>
-                                <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${
-                                  plan.status === 'COMPLETED' ? 'bg-primary/10 text-primary' : 'bg-blue-100 text-blue-700'
-                                }`}>
-                                  {plan.status === 'COMPLETED' ? 'Concluído' : 'Em Aberto'}
-                                </span>
-                              </div>
-                              
-                              <div className="mb-4">
-                                <div className="flex justify-between items-center mb-1">
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">Progresso</p>
-                                  <p className="text-[10px] font-bold text-slate-600">{paidCount}/{plan.installments_count} parcelas</p>
-                                </div>
-                                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-primary h-full transition-all" style={{ width: `${progress}%` }} />
-                                </div>
-                              </div>
-                              
-                              <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                                <div>
-                                  <p className="text-[10px] text-slate-400 uppercase font-bold">Valor Total</p>
-                                  <p className="font-bold text-slate-700">
-                                    {Number(plan.total_amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                  </p>
-                                </div>
-                                <div className="flex gap-2">
-                                  <button 
-                                    onClick={() => {
-                                      const nextInstallment = planInstallments.find(i => i.status === 'PENDING');
-                                      if (nextInstallment) {
-                                        setSelectedInstallment({...nextInstallment, procedure: plan.procedure, patient_name: plan.patient_name});
-                                        setIsReceiveInstallmentModalOpen(true);
-                                      } else {
-                                        alert('Todas as parcelas deste plano já foram pagas.');
-                                      }
-                                    }}
-                                    className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg font-bold text-xs hover:bg-primary/20 transition-colors"
-                                  >
-                                    <DollarSign size={14} />
-                                    Receber
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      setSelectedPlan(plan);
-                                      setIsViewInstallmentsModalOpen(true);
-                                    }}
-                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-blue-100"
-                                  >
-                                    <ClipboardList size={16} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {paymentPlans.length === 0 && (
-                          <div className="text-center py-8 bg-white rounded-xl border border-dashed border-slate-200">
-                            <p className="text-slate-400 text-sm italic">Nenhum plano de parcelamento encontrado.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <Finance
+                transactions={transactions}
+                paymentPlans={paymentPlans}
+                installments={installments}
+                financialSummary={financialSummary}
+                patients={patients}
+                apiFetch={apiFetch}
+                onOpenTransactionModal={(type) => {
+                  setTransactionType(type);
+                  setIsTransactionModalOpen(true);
+                }}
+                onDeleteTransaction={handleDeleteTransaction}
+                onGenerateReceipt={generateReceipt}
+                onPrint={imprimirDocumento}
+                onExport={() => {
+                  setExportType('finance');
+                  setIsExportModalOpen(true);
+                }}
+                onOpenPaymentPlanModal={() => setIsPaymentPlanModalOpen(true)}
+                onReceiveInstallment={(inst) => {
+                  setSelectedInstallment(inst);
+                  setIsReceiveInstallmentModalOpen(true);
+                }}
+                onViewInstallments={(plan) => {
+                  setSelectedPlan(plan);
+                  setIsViewInstallmentsModalOpen(true);
+                }}
+                openPatientRecord={openPatientRecord}
+                formatDate={formatDate}
+              />
             )}
 
             {(activeTab === 'admin' && user?.role?.toUpperCase() === 'ADMIN') && (

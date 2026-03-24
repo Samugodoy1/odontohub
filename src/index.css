@@ -8,10 +8,18 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   body {
     @apply bg-[#F2F2F7] text-[#1C1C1E] antialiased selection:bg-primary/10 selection:text-primary;
     font-family: 'Inter', sans-serif;
     letter-spacing: -0.01em;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
 

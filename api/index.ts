@@ -30,7 +30,8 @@ import {
   createPaymentPlan,
   getPaymentPlans,
   getInstallments,
-  payInstallment
+  payInstallment,
+  getFinancialInsights
 } from '../server/controllers/financeController.js';
 import { 
   getDentists, 
@@ -133,6 +134,7 @@ app.get(['/finance/installments', '/api/finance/installments'], getInstallments)
 app.patch(['/finance/installments/:id/pay', '/api/finance/installments/:id/pay'], payInstallment);
 app.post(['/finance', '/api/finance'], createTransaction);
 app.delete(['/finance/:id', '/api/finance/:id'], deleteTransaction);
+app.get(['/finance/insights', '/api/finance/insights'], getFinancialInsights);
 
 // Dentists
 app.get(['/dentists', '/api/dentists'], getDentists);
