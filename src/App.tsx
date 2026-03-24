@@ -282,27 +282,34 @@ const ClinicalPageRoute = ({ transactions, appointments, onUpdatePatient, onUpda
   const { id } = useParams();
   const [patient, setPatient] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const apiFetchRef = useRef(apiFetch);
+  apiFetchRef.current = apiFetch;
 
-  useEffect(() => {
-    const loadPatient = async () => {
-      // Only show loading if we don't have the patient or it's a different patient
-      if (!patient || patient.id !== Number(id)) {
-        setLoading(true);
+  const loadPatient = React.useCallback(async (showLoading = true) => {
+    if (!id) return;
+
+    if (showLoading) {
+      setLoading(true);
+    }
+
+    try {
+      const res = await apiFetchRef.current(`/api/patients/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPatient(data);
       }
-      try {
-        const res = await apiFetch(`/api/patients/${id}`);
-        if (res.ok) {
-          const data = await res.json();
-          setPatient(data);
-        }
-      } catch (error) {
-        console.error('Error loading patient:', error);
-      } finally {
+    } catch (error) {
+      console.error('Error loading patient:', error);
+    } finally {
+      if (showLoading) {
         setLoading(false);
       }
-    };
-    if (id) loadPatient();
-  }, [id, apiFetch]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadPatient(true);
+  }, [loadPatient]);
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center bg-slate-50">
@@ -327,6 +334,8 @@ const ClinicalPageRoute = ({ transactions, appointments, onUpdatePatient, onUpda
         setPatient((prev: any) => ({ ...prev, evolution: [data, ...(prev.evolution || [])] }));
         onAddEvolution(data);
       }}
+      onRefreshPatient={() => loadPatient(false)}
+      apiFetch={apiFetch}
       setAppActiveTab={setAppActiveTab}
       navigate={navigate}
     />
@@ -489,9 +498,11 @@ export default function App() {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [patientListFilter, setPatientListFilter] = useState<'all' | 'in-treatment' | 'review' | 'overdue'>('all');
+  const [patientListFilter, setPatientListFilter] = useState<'all' | 'action-needed' | 'at-risk' | 'no-appointment' | 'in-treatment' | 'overdue'>('all');
   const [patientActionsToday, setPatientActionsToday] = useState<Set<number>>(new Set());
   const [patientsInlineFeedback, setPatientsInlineFeedback] = useState('');
+  const [patientIntelligence, setPatientIntelligence] = useState<any[]>([]);
+  const [patientIntelLoaded, setPatientIntelLoaded] = useState(false);
   const [dentistSearchTerm, setDentistSearchTerm] = useState('');
   const [dentistStatusFilter, setDentistStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -740,6 +751,12 @@ export default function App() {
       if (sData && !sData.error) setFinancialSummary(sData);
       if (Array.isArray(plData)) setPaymentPlans(plData);
       if (Array.isArray(iData)) setInstallments(iData);
+
+      // Fetch patient intelligence (non-blocking)
+      apiFetch('/api/intelligence/patients', { explicitToken })
+        .then(r => r.json())
+        .then(data => { if (Array.isArray(data)) { setPatientIntelligence(data); setPatientIntelLoaded(true); } })
+        .catch(() => {});
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -1216,6 +1233,25 @@ export default function App() {
       date: new Date().toLocaleDateString('en-CA'),
       time: '',
       duration: '30',
+      notes: ''
+    });
+    setIsModalOpen(true);
+  };
+
+  const openScheduleSuggestion = (patientId: number, date: string, startTime: string, endTime: string) => {
+    const patient = patients.find(p => p.id === patientId);
+    if (!patient) return;
+    const dentistId = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
+    // Calculate duration from start/end times
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    const duration = ((eh * 60 + em) - (sh * 60 + sm)).toString();
+    setNewAppointment({
+      patient_id: patient.id.toString(),
+      dentist_id: dentistId || '',
+      date,
+      time: startTime,
+      duration: duration || '30',
       notes: ''
     });
     setIsModalOpen(true);
@@ -2424,6 +2460,7 @@ export default function App() {
                 setIsModalOpen={setIsModalOpen}
                 setActiveTab={setActiveTab}
                 sendReminder={sendReminder}
+                onSchedulePatient={openScheduleSuggestion}
               />
             )}
 
@@ -3951,21 +3988,32 @@ export default function App() {
                     });
 
                   // ---------- filtered + sorted card list ----------
+                  // Build a quick lookup from intelligence data
+                  const intelMap = new Map<number, any>();
+                  patientIntelligence.forEach((pi: any) => intelMap.set(pi.patient_id, pi));
+
                   const patientCards = patients
                     .filter(p =>
                       (p.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
                       (p.cpf && p.cpf.includes(searchTerm)) ||
                       p.phone.includes(searchTerm)
                     )
-                    .map(patient => ({ patient, meta: getPatientCardMeta(patient) }))
-                    .filter(({ meta }) => {
+                    .map(patient => ({ patient, meta: getPatientCardMeta(patient), intel: intelMap.get(patient.id) || null }))
+                    .filter(({ meta, intel }) => {
                       if (patientListFilter === 'all') return true;
-                      if (patientListFilter === 'in-treatment') return meta.clinicalStatus === 'Em tratamento';
-                      if (patientListFilter === 'review') return meta.clinicalStatus === 'Revisão';
+                      if (patientListFilter === 'action-needed') return intel?.priority === 'HIGH';
+                      if (patientListFilter === 'at-risk') return intel?.status === 'ABANDONO' || intel?.status === 'ATENCAO';
+                      if (patientListFilter === 'no-appointment') return intel ? !intel.has_future_appointment : !meta.nextVisitDate;
+                      if (patientListFilter === 'in-treatment') return intel?.status === 'EM_TRATAMENTO' || meta.clinicalStatus === 'Em tratamento';
                       if (patientListFilter === 'overdue') return meta.attentionStatus.key === 'overdue';
                       return true;
                     })
                     .sort((a, b) => {
+                      // Sort by intelligence priority first, then by days since last visit
+                      const priorityOrder: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+                      const aPri = priorityOrder[a.intel?.priority] ?? 2;
+                      const bPri = priorityOrder[b.intel?.priority] ?? 2;
+                      if (aPri !== bPri) return aPri - bPri;
                       const attentionPriority = { overdue: 0, review: 1, 'up-to-date': 2 } as const;
                       const attentionDiff =
                         attentionPriority[a.meta.attentionStatus.key as keyof typeof attentionPriority] -
@@ -3976,11 +4024,17 @@ export default function App() {
                       return dateA - dateB;
                     });
 
+                  const totalActionNeeded = patientIntelligence.filter((pi: any) => pi.priority === 'HIGH').length;
+                  const totalAtRisk = patientIntelligence.filter((pi: any) => pi.status === 'ABANDONO' || pi.status === 'ATENCAO').length;
+                  const totalNoAppointment = patientIntelligence.filter((pi: any) => !pi.has_future_appointment && pi.status !== 'FINALIZADO').length;
+
                   const filterChips = [
-                    { key: 'all', label: 'Todos' },
-                    { key: 'in-treatment', label: 'Em tratamento' },
-                    { key: 'review', label: 'Revisão' },
-                    { key: 'overdue', label: 'Atrasados' }
+                    { key: 'all', label: 'Todos', count: 0 },
+                    { key: 'action-needed', label: 'Preciso agir', count: totalActionNeeded },
+                    { key: 'at-risk', label: 'Em risco', count: totalAtRisk },
+                    { key: 'no-appointment', label: 'Sem agendamento', count: totalNoAppointment },
+                    { key: 'in-treatment', label: 'Em tratamento', count: 0 },
+                    { key: 'overdue', label: 'Atrasados', count: totalOverdue }
                   ] as const;
 
                   const handleScheduleFromCard = (patient: Patient) => {
@@ -4113,11 +4167,15 @@ export default function App() {
                             }`}
                           >
                             {chip.label}
-                            {chip.key === 'overdue' && totalOverdue > 0 && (
-                              <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
-                                patientListFilter === 'overdue' ? 'bg-white/30 text-white' : 'bg-rose-100 text-rose-600'
+                            {chip.count > 0 && (
+                              <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold ${
+                                chip.key === 'action-needed' || chip.key === 'overdue'
+                                  ? 'bg-rose-100 text-rose-600'
+                                  : chip.key === 'at-risk'
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-slate-200 text-slate-600'
                               }`}>
-                                {totalOverdue}
+                                {chip.count}
                               </span>
                             )}
                           </button>
@@ -4126,60 +4184,105 @@ export default function App() {
 
                       {/* ── Card grid ── */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {patientCards.map(({ patient, meta }) => {
+                        {patientCards.map(({ patient, meta, intel }) => {
                           const isOverdue = meta.attentionStatus.key === 'overdue';
                           const isReview  = meta.attentionStatus.key === 'review';
                           const isScheduled = meta.status === 'em_tratamento' && !!meta.nextVisitDate;
                           const isActed   = patientActionsToday.has(patient.id);
-                          const urgencyLabel = isScheduled
-                            ? `Próxima consulta · ${meta.nextVisitLabel || 'Agendada'}`
+
+                          // Intelligence-driven labels
+                          const intelPriority = intel?.priority || null;
+                          const intelStatus = intel?.status || null;
+                          const daysAgo = intel?.days_since_last_visit;
+
+                          // Status label and config
+                          const statusConfig: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+                            ABANDONO:      { label: 'Abandono',       bg: 'bg-rose-50',    text: 'text-rose-700',    dot: 'bg-rose-500' },
+                            ATENCAO:       { label: 'Atenção',        bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400' },
+                            EM_TRATAMENTO: { label: 'Em tratamento',  bg: 'bg-sky-50',     text: 'text-sky-700',     dot: 'bg-sky-500' },
+                            FINALIZADO:    { label: 'Concluído',      bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+                          };
+                          const priorityConfig: Record<string, { label: string; bg: string; text: string; ring: string }> = {
+                            HIGH:   { label: 'Urgente', bg: 'bg-rose-500',    text: 'text-white',     ring: 'ring-rose-200' },
+                            MEDIUM: { label: 'Atenção', bg: 'bg-amber-400',   text: 'text-white',     ring: 'ring-amber-200' },
+                          };
+                          const stCfg = intelStatus ? statusConfig[intelStatus] : null;
+                          const priCfg = intelPriority ? priorityConfig[intelPriority] : null;
+
+                          const urgencyLabel = intelStatus === 'ABANDONO'
+                            ? `${daysAgo != null ? `${daysAgo}d sem visita` : meta.lastVisitLabel}`
+                            : intelStatus === 'ATENCAO'
+                            ? `Sem agendamento · ${meta.lastVisitLabel}`
+                            : isScheduled
+                            ? `Próx: ${meta.nextVisitLabel || 'Agendada'}`
                             : isOverdue
                             ? `Sem visita · ${meta.lastVisitLabel}`
                             : isReview
-                              ? `Revisão próxima · ${meta.lastVisitLabel}`
-                              : `Em dia · ${meta.lastVisitLabel}`;
+                              ? `Revisão · ${meta.lastVisitLabel}`
+                              : meta.lastVisitLabel;
+
+                          const borderColor = intelPriority === 'HIGH' ? 'border-l-rose-500 border-rose-100' : intelStatus === 'ATENCAO' ? 'border-l-amber-400 border-amber-50' : intelStatus === 'ABANDONO' ? 'border-l-rose-400 border-rose-50' : intelStatus === 'EM_TRATAMENTO' ? 'border-l-sky-400 border-slate-100' : 'border-l-transparent border-slate-100 hover:border-slate-200';
+
                           return (
                             <div
                               key={patient.id}
-                              className={`flex items-center gap-4 bg-white rounded-2xl border px-4 py-3.5 hover:shadow-sm transition-all ${
-                                isOverdue ? 'border-rose-100' : 'border-slate-100 hover:border-slate-200'
-                              }`}
+                              className={`flex items-stretch bg-white rounded-2xl border border-l-[3px] hover:shadow-md transition-all ${borderColor}`}
                             >
-                              {/* Avatar */}
-                              <button
-                                type="button"
-                                onClick={() => openPatientRecord(patient.id)}
-                                className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold text-sm overflow-hidden border border-primary/20 shrink-0"
-                              >
-                                {patient.photo_url ? (
-                                  <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                ) : (
-                                  (patient.name || '?').charAt(0)
-                                )}
-                              </button>
+                              <div className="flex items-center gap-3.5 flex-1 min-w-0 px-4 py-3.5">
+                                {/* Avatar */}
+                                <button
+                                  type="button"
+                                  onClick={() => openPatientRecord(patient.id)}
+                                  className="w-11 h-11 bg-primary/10 text-primary rounded-full flex items-center justify-center font-bold text-sm overflow-hidden border border-primary/20 shrink-0"
+                                >
+                                  {patient.photo_url ? (
+                                    <img src={patient.photo_url} alt={patient.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    (patient.name || '?').charAt(0)
+                                  )}
+                                </button>
 
-                              {/* Info */}
-                              <button
-                                type="button"
-                                onClick={() => openPatientRecord(patient.id)}
-                                className="min-w-0 flex-1 text-left"
-                              >
-                                <p className="text-[15px] font-semibold text-slate-900 truncate leading-tight">{patient.name}</p>
-                                <p className={`text-xs mt-0.5 truncate ${
-                                  isScheduled ? 'text-sky-600' : isOverdue ? 'text-rose-500' : isReview ? 'text-amber-500' : 'text-slate-400'
-                                }`}>
-                                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${meta.attentionStatus.dot}`} />
-                                  {urgencyLabel}
-                                </p>
-                              </button>
+                                {/* Info */}
+                                <button
+                                  type="button"
+                                  onClick={() => openPatientRecord(patient.id)}
+                                  className="min-w-0 flex-1 text-left"
+                                >
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <p className="text-[15px] font-semibold text-slate-900 truncate leading-tight">{patient.name}</p>
+                                    {priCfg && (
+                                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${priCfg.bg} ${priCfg.text} ring-1 ${priCfg.ring} shrink-0`}>
+                                        {priCfg.label}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {stCfg && (
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${stCfg.bg} ${stCfg.text}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${stCfg.dot}`} />
+                                        {stCfg.label}
+                                      </span>
+                                    )}
+                                    <span className="text-[11px] text-slate-400 truncate">
+                                      {urgencyLabel}
+                                    </span>
+                                  </div>
+                                  {intel?.next_appointment_date && (
+                                    <p className="text-[10px] text-sky-600 font-medium mt-1 flex items-center gap-1">
+                                      <Calendar size={10} />
+                                      Próx: {new Date(intel.next_appointment_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  )}
+                                </button>
+                              </div>
 
                               {/* Icon actions */}
-                              <div className="flex items-center gap-1 shrink-0">
+                              <div className="flex items-center gap-1 shrink-0 px-3 border-l border-slate-50">
                                 <button
                                   type="button"
                                   title={isActed ? 'Agendamento iniciado' : 'Agendar consulta'}
                                   onClick={() => handleScheduleFromCard(patient)}
-                                  className={`w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
+                                  className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
                                     isActed
                                       ? 'text-emerald-600 bg-emerald-50'
                                       : 'text-slate-400 hover:text-primary hover:bg-primary/8'
@@ -4191,7 +4294,7 @@ export default function App() {
                                   type="button"
                                   title="Contatar via WhatsApp"
                                   onClick={() => contactPatientOnWhatsApp(patient)}
-                                  className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                                  className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
                                 >
                                   <MessageCircle size={16} />
                                 </button>

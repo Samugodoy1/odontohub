@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { deriveToothFlagsPure } from '../utils/toothStatusDerivation';
 
 export type ToothStatus = 
   | 'healthy' 
@@ -62,21 +63,36 @@ const toothNumbers = {
   lowerRight: [41, 42, 43, 44, 45, 46, 47, 48],
 };
 
+// Conditions that represent PENDING treatment needs (feeds into intelligence)
+const PENDING_STATUSES: Set<ToothStatus> = new Set([
+  'decay', 'root_canal_needed', 'extraction_needed', 'fracture',
+]);
+
+// Conditions that are urgent
+const URGENT_STATUSES: Set<ToothStatus> = new Set([
+  'root_canal_needed', 'extraction_needed', 'fracture',
+]);
+
+// Conditions that represent completed procedures
+const COMPLETED_STATUSES: Set<ToothStatus> = new Set([
+  'filling', 'crown', 'root_canal_done', 'extraction_done', 'implant', 'prosthesis', 'facet',
+]);
+
 const statusColors: Record<ToothStatus, string> = {
   healthy: 'bg-white border-slate-300 text-slate-700',
-  decay: 'bg-rose-50 border-rose-300 text-rose-800',
-  filling: 'bg-sky-50 border-sky-300 text-sky-800',
-  crown: 'bg-amber-50 border-amber-300 text-amber-900',
-  root_canal_done: 'bg-emerald-50 border-emerald-300 text-emerald-800',
-  root_canal_needed: 'bg-orange-50 border-orange-300 text-orange-800',
-  implant: 'bg-indigo-50 border-indigo-300 text-indigo-800',
-  extraction_done: 'bg-slate-100 border-slate-300 text-slate-700',
-  extraction_needed: 'bg-yellow-50 border-yellow-300 text-yellow-800',
-  fracture: 'bg-rose-50 border-rose-300 text-rose-800',
-  wear: 'bg-zinc-100 border-zinc-300 text-zinc-700',
-  facet: 'bg-cyan-50 border-cyan-300 text-cyan-800',
-  prosthesis: 'bg-purple-50 border-purple-300 text-purple-800',
-  missing: 'bg-slate-100 border-slate-300 text-slate-600',
+  decay: 'bg-amber-50 border-amber-300 text-amber-900',
+  filling: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+  crown: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+  root_canal_done: 'bg-sky-50 border-sky-200 text-sky-800',
+  root_canal_needed: 'bg-rose-50 border-rose-300 text-rose-800',
+  implant: 'bg-sky-50 border-sky-200 text-sky-800',
+  extraction_done: 'bg-slate-100 border-slate-300 text-slate-600',
+  extraction_needed: 'bg-rose-50 border-rose-300 text-rose-800',
+  fracture: 'bg-rose-100 border-rose-300 text-rose-900',
+  wear: 'bg-amber-50 border-amber-200 text-amber-800',
+  facet: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+  prosthesis: 'bg-sky-50 border-sky-200 text-sky-800',
+  missing: 'bg-slate-100 border-slate-300 text-slate-500',
 };
 
 const statusLabels: Record<ToothStatus, string> = {
@@ -95,6 +111,51 @@ const statusLabels: Record<ToothStatus, string> = {
   prosthesis: 'Prótese',
   missing: 'Ausente',
 };
+
+interface LegendItem {
+  key: string;
+  label: string;
+  swatchClass: string;
+  markerClass?: string;
+  markerPosition?: 'top' | 'bottom';
+}
+
+const legendItems: LegendItem[] = [
+  {
+    key: 'normal',
+    label: 'Normal',
+    swatchClass: 'bg-white border border-slate-300',
+  },
+  {
+    key: 'pending',
+    label: 'Pendente',
+    swatchClass: 'bg-amber-50 border border-amber-300',
+  },
+  {
+    key: 'attention',
+    label: 'Urgente',
+    swatchClass: 'bg-rose-50 border border-rose-300',
+  },
+  {
+    key: 'in-progress',
+    label: 'Em curso',
+    swatchClass: 'bg-white border border-slate-300',
+    markerClass: 'bg-emerald-500',
+    markerPosition: 'top',
+  },
+  {
+    key: 'done',
+    label: 'Concluído',
+    swatchClass: 'bg-white border border-slate-300',
+    markerClass: 'bg-sky-500',
+    markerPosition: 'bottom',
+  },
+  {
+    key: 'focus',
+    label: 'Próximo',
+    swatchClass: 'bg-white border-2 border-slate-900',
+  },
+];
 
 const diagnosisActions = [
   { key: 'decay', label: 'Carie', status: 'decay' as ToothStatus, category: 'diagnosis' as const },
@@ -115,6 +176,37 @@ const continuationActions = [
   { key: 'crown', label: 'Coroa', status: 'crown' as ToothStatus, category: 'procedure' as const },
 ];
 
+const resolveHistoryTag = (procedure?: string, notes?: string) => {
+  const text = `${procedure || ''} ${notes || ''}`.toLowerCase();
+  if (text.includes('conclus') || text.includes('conclu')) return 'Conclusão';
+  if (text.includes('início') || text.includes('inicio')) return 'Início';
+  if (text.includes('convers') || text.includes('ajust')) return 'Ajuste';
+  if (text.includes('diag')) return 'Diagnóstico';
+  return 'Registro';
+};
+
+const historyTagTone: Record<string, string> = {
+  'Diagnóstico': 'border-rose-200 bg-rose-50/70 text-rose-700',
+  'Início': 'border-emerald-200 bg-emerald-50/70 text-emerald-700',
+  'Ajuste': 'border-amber-200 bg-amber-50/70 text-amber-700',
+  'Conclusão': 'border-sky-200 bg-sky-50/70 text-sky-700',
+  'Registro': 'border-slate-200 bg-slate-50 text-slate-500',
+};
+
+const formatHistoryDate = (value?: string) => {
+  if (!value) return '';
+
+  // Preserve calendar date from ISO/SQL strings and show only dd/mm/yyyy.
+  const datePart = value.includes('T') ? value.split('T')[0] : value;
+  const date = new Date(`${datePart}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString('pt-BR');
+};
+
 interface ToothProps {
   number: number;
   status: ToothStatus;
@@ -122,6 +214,8 @@ interface ToothProps {
   isInTreatment: boolean;
   hasDiagnosis: boolean;
   isCompleted: boolean;
+  isPending: boolean;
+  isUrgent: boolean;
   isPriority: boolean;
   disabled: boolean;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -130,9 +224,9 @@ interface ToothProps {
   buttonRef?: (el: HTMLButtonElement | null) => void;
 }
 
-const Tooth: React.FC<ToothProps> = ({ number, status, selected, isInTreatment, hasDiagnosis, isCompleted, isPriority, disabled, onClick, onHover, onLeave, buttonRef }) => {
+const Tooth: React.FC<ToothProps> = ({ number, status, selected, isInTreatment, hasDiagnosis, isCompleted, isPending, isUrgent, isPriority, disabled, onClick, onHover, onLeave, buttonRef }) => {
   return (
-    <div className="flex flex-col items-center gap-1 relative">
+    <div className="relative">
       <button
         ref={buttonRef}
         type="button"
@@ -141,33 +235,35 @@ const Tooth: React.FC<ToothProps> = ({ number, status, selected, isInTreatment, 
         onMouseEnter={(event) => onHover(event, number)}
         onMouseLeave={onLeave}
         className={`
-          w-12 h-[4.1rem] sm:w-[3.15rem] sm:h-[4.45rem] rounded-[18px] border-[1.5px]
-          flex items-center justify-center text-[11px] sm:text-[12px] font-extrabold tracking-tight
+          w-10 h-[3.6rem] sm:w-12 sm:h-[4.1rem] rounded-[16px] sm:rounded-[18px] border
+          flex items-center justify-center text-[10px] sm:text-[12px] font-semibold tracking-tight
           transition-all duration-200
           ${statusColors[status]}
           ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
-          ${isInTreatment ? 'ring-2 ring-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.20)]' : ''}
-          ${hasDiagnosis ? 'border-rose-400 bg-rose-50/90 shadow-[0_0_0_2px_rgba(244,63,94,0.12)]' : ''}
-          ${isCompleted ? 'ring-2 ring-sky-400 shadow-[0_0_0_3px_rgba(56,189,248,0.16)]' : ''}
-          ${isPriority ? 'ring-2 ring-amber-400 shadow-[0_0_0_4px_rgba(251,191,36,0.18)]' : ''}
+          ${isUrgent ? 'ring-2 ring-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.2)]' : ''}
+          ${isPending && !isUrgent ? 'ring-2 ring-amber-300' : ''}
+          ${isInTreatment && !isPending && !isUrgent ? 'ring-2 ring-emerald-300' : ''}
+          ${isCompleted && !isPending && !isUrgent ? 'ring-2 ring-sky-300' : ''}
+          ${isPriority ? 'ring-2 ring-slate-900 ring-offset-2 ring-offset-white' : ''}
           ${selected
-            ? 'scale-[1.06] ring-2 ring-primary shadow-[0_16px_28px_rgba(12,155,114,0.24)]'
-            : 'hover:scale-[1.03] hover:shadow-[0_10px_18px_rgba(15,23,42,0.10)] active:scale-[0.98]'}
+            ? 'scale-[1.04] ring-2 ring-slate-900 shadow-[0_10px_18px_rgba(15,23,42,0.08)]'
+            : 'hover:scale-[1.02] hover:shadow-[0_8px_16px_rgba(15,23,42,0.08)] active:scale-[0.98]'}
         `}
       >
-        {isInTreatment && (
+        {isUrgent && (
+          <span className="absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full border-2 border-white bg-rose-500 animate-pulse" />
+        )}
+        {isPending && !isUrgent && (
+          <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-white bg-amber-400" />
+        )}
+        {isInTreatment && !isPending && !isUrgent && (
           <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full border border-white bg-emerald-500" />
         )}
-        {isCompleted && (
+        {isCompleted && !isPending && !isUrgent && !isInTreatment && (
           <span className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border border-white bg-sky-500" />
         )}
         {number}
       </button>
-      {isPriority && (
-        <span className="mt-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-900">
-          Prior.
-        </span>
-      )}
     </div>
   );
 };
@@ -178,6 +274,7 @@ interface ActionMenuProps {
   selectedStatus: ToothStatus;
   hasTreatment: boolean;
   currentProcedure?: string;
+  toothHistory: ToothRecord[];
   mobile: boolean;
   anchorRect: DOMRect | null;
   onClose: () => void;
@@ -190,6 +287,7 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
   selectedStatus,
   hasTreatment,
   currentProcedure,
+  toothHistory,
   mobile,
   anchorRect,
   onClose,
@@ -224,7 +322,7 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
   if (!open || selectedTooth === null) return null;
 
   const actions = hasTreatment ? continuationActions : [...diagnosisActions, ...procedureActions];
-  const menuTitle = hasTreatment ? 'Continuar tratamento' : 'Iniciar acao';
+  const recentHistory = toothHistory.slice(0, 4);
 
   if (mobile) {
     return (
@@ -237,8 +335,8 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
           <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-slate-200" />
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Dente {selectedTooth}</p>
-              <p className="text-xs text-slate-500">{menuTitle}</p>
+              <p className="text-base font-semibold text-slate-900">Dente {selectedTooth}</p>
+              {hasTreatment && <p className="text-xs text-slate-500">{currentProcedure || 'Em andamento'}</p>}
             </div>
             <button
               type="button"
@@ -248,26 +346,50 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
               <X size={18} />
             </button>
           </div>
-          {hasTreatment && (
-            <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-              Procedimento atual: {currentProcedure || 'Em andamento'}
-            </div>
-          )}
           <div className="grid grid-cols-2 gap-2 pb-2">
             {actions.map((action) => (
               <button
                 key={action.key}
                 type="button"
                 onClick={() => onAction({ label: action.label, status: action.status, category: action.category, mode: hasTreatment ? 'continuity' : 'initial' })}
-                className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all duration-200
+                className={`rounded-xl border px-3 py-3 text-sm font-semibold transition-all duration-200
                   ${selectedStatus === action.status
-                    ? 'border-primary bg-primary/10 text-primary'
+                    ? 'border-slate-900 bg-slate-100 text-slate-950'
                     : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white hover:border-slate-300'}
                 `}
               >
                 {action.label}
               </button>
             ))}
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Histórico do dente</p>
+            {recentHistory.length > 0 ? (
+              <div className="mt-2 space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                {recentHistory.map((entry, idx) => (
+                  <div key={entry.id || `${entry.date}-${entry.procedure}-${idx}`} className="rounded-lg bg-white px-2.5 py-2 border border-slate-200">
+                    {(() => {
+                      const tag = resolveHistoryTag(entry.procedure, entry.notes);
+                      const tone = historyTagTone[tag] || historyTagTone.Registro;
+                      return (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium text-slate-800 truncate">{entry.procedure}</p>
+                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] ${tone}`}>
+                              {tag}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5">{formatHistoryDate(entry.date)}</p>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">Sem histórico para este dente.</p>
+            )}
           </div>
         </div>
       </div>
@@ -282,14 +404,11 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
       <div
         ref={menuRef}
         style={{ top, left }}
-        className="pointer-events-auto absolute w-[260px] rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_22px_45px_rgba(15,23,42,0.18)] transition-all duration-200"
+        className="pointer-events-auto absolute w-[240px] rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_18px_36px_rgba(15,23,42,0.14)] transition-all duration-200"
       >
-        <p className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Dente {selectedTooth}</p>
-        <p className="mb-2 px-1 text-[11px] text-slate-500">{menuTitle}</p>
+        <p className="px-1 text-sm font-semibold text-slate-900">Dente {selectedTooth}</p>
         {hasTreatment && (
-          <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-900">
-            Atual: {currentProcedure || 'Em andamento'}
-          </div>
+          <p className="mb-2 px-1 text-[11px] text-slate-500">{currentProcedure || 'Em andamento'}</p>
         )}
         <div className="grid grid-cols-2 gap-1.5">
           {actions.map((action) => (
@@ -299,13 +418,42 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
               onClick={() => onAction({ label: action.label, status: action.status, category: action.category, mode: hasTreatment ? 'continuity' : 'initial' })}
               className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-all duration-200
                 ${selectedStatus === action.status
-                  ? 'border-primary bg-primary/10 text-primary'
+                  ? 'border-slate-900 bg-slate-100 text-slate-950'
                   : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white hover:border-slate-300'}
               `}
             >
               {action.label}
             </button>
           ))}
+        </div>
+
+        <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2">
+          <p className="px-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Histórico</p>
+          {recentHistory.length > 0 ? (
+            <div className="mt-1 space-y-1 max-h-24 overflow-y-auto pr-1">
+              {recentHistory.map((entry, idx) => (
+                <div key={entry.id || `${entry.date}-${entry.procedure}-${idx}`} className="rounded-md bg-white px-2 py-1.5 border border-slate-200">
+                  {(() => {
+                    const tag = resolveHistoryTag(entry.procedure, entry.notes);
+                    const tone = historyTagTone[tag] || historyTagTone.Registro;
+                    return (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-medium text-slate-800 truncate">{entry.procedure}</p>
+                          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] ${tone}`}>
+                            {tag}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{formatHistoryDate(entry.date)}</p>
+                      </>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1 px-0.5 text-[11px] text-slate-500">Sem histórico.</p>
+          )}
         </div>
       </div>
     </div>
@@ -330,19 +478,36 @@ export const Odontogram: React.FC<OdontogramProps> = ({
   const [anchorRect, setAnchorRect] = React.useState<DOMRect | null>(null);
   const [hoveredTooth, setHoveredTooth] = React.useState<number | null>(null);
   const [hoverRect, setHoverRect] = React.useState<DOMRect | null>(null);
+  const [optimisticHistory, setOptimisticHistory] = React.useState<ToothRecord[]>([]);
   const toothRefs = React.useRef<Record<number, HTMLButtonElement | null>>({});
   const activeToothSet = React.useMemo(() => new Set(activeToothNumbers), [activeToothNumbers]);
 
-  const treatmentByTooth = React.useMemo(() => {
-    const map = new Map<number, { procedure?: string; status?: string }>();
+  const getToothStatus = React.useCallback((num: number): ToothStatus => {
+    return data[num]?.status || 'healthy';
+  }, [data]);
+
+  const treatmentsByTooth = React.useMemo(() => {
+    const map = new Map<number, Array<{ id?: string; procedure?: string; status?: string }>>();
     treatments.forEach((item) => {
       const toothNumber = Number(item.tooth_number);
-      if (Number.isFinite(toothNumber) && toothNumber > 0 && !map.has(toothNumber)) {
-        map.set(toothNumber, { procedure: item.procedure, status: item.status });
+      if (Number.isFinite(toothNumber) && toothNumber > 0) {
+        const list = map.get(toothNumber) || [];
+        list.push({ id: item.id, procedure: item.procedure, status: item.status });
+        map.set(toothNumber, list);
       }
     });
     return map;
   }, [treatments]);
+
+  const deriveToothFlags = React.useCallback(
+    (num: number) => {
+      const toothStatus = getToothStatus(num);
+      const toothTreatments = treatmentsByTooth.get(num) || [];
+      const planStatuses = toothTreatments.map((t) => String(t.status || ''));
+      return deriveToothFlagsPure(toothStatus, planStatuses);
+    },
+    [getToothStatus, treatmentsByTooth]
+  );
 
   React.useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)');
@@ -352,9 +517,61 @@ export const Odontogram: React.FC<OdontogramProps> = ({
     return () => media.removeEventListener('change', sync);
   }, []);
 
-  const getToothStatus = React.useCallback((num: number): ToothStatus => {
-    return data[num]?.status || 'healthy';
-  }, [data]);
+  const historyByTooth = React.useMemo(() => {
+    const map = new Map<number, ToothRecord[]>();
+    const treatmentHistory: ToothRecord[] = (treatments || [])
+      .map((item) => {
+        const tooth = Number(item.tooth_number);
+        if (!Number.isFinite(tooth) || tooth <= 0 || !item.procedure) return null;
+
+        return {
+          id: Number(item.id) || undefined,
+          tooth_number: tooth,
+          procedure: item.procedure,
+          notes: '',
+          date: new Date().toISOString().split('T')[0],
+        } as ToothRecord;
+      })
+      .filter((entry): entry is ToothRecord => entry !== null);
+
+    const persistedHistory = history || [];
+
+    // Prefer persisted records, then optimistic, then treatment fallback.
+    const mergedHistory = [
+      ...persistedHistory,
+      ...optimisticHistory,
+      ...treatmentHistory,
+    ];
+
+    const seen = new Set<string>();
+    const dedupedHistory = mergedHistory.filter((entry) => {
+      const key = [
+        Number(entry.tooth_number) || 0,
+        String(entry.procedure || '').trim().toLowerCase(),
+        String(entry.date || '').slice(0, 10),
+        String(entry.notes || '').trim().toLowerCase(),
+      ].join('|');
+
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    dedupedHistory.forEach((entry) => {
+      const tooth = Number(entry.tooth_number);
+      if (!Number.isFinite(tooth) || tooth <= 0) return;
+      const list = map.get(tooth) || [];
+      list.push(entry);
+      map.set(tooth, list);
+    });
+
+    map.forEach((list, tooth) => {
+      const sorted = [...list].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      map.set(tooth, sorted);
+    });
+
+    return map;
+  }, [history, optimisticHistory, treatments]);
 
   const handleToothClick = (num: number, event: React.MouseEvent<HTMLButtonElement>) => {
     if (readOnly) return;
@@ -401,12 +618,32 @@ export const Odontogram: React.FC<OdontogramProps> = ({
       console.error('Error dispatching selected procedure:', error);
     }
 
+    const today = new Date().toISOString().split('T')[0];
+    const isCompletionStatus = ['root_canal_done', 'extraction_done'].includes(String(status || '').toLowerCase());
+    const historyNotes =
+      category === 'diagnosis'
+        ? 'Diagnóstico registrado no odontograma.'
+        : mode === 'continuity' && isCompletionStatus
+          ? 'Procedimento concluído.'
+          : mode === 'continuity'
+            ? 'Plano ajustado.'
+            : 'Início de tratamento.';
+
+    const optimisticRecord: ToothRecord = {
+      id: Date.now(),
+      tooth_number: selectedTooth,
+      procedure: label,
+      notes: historyNotes,
+      date: today,
+    };
+
+    setOptimisticHistory((prev) => [optimisticRecord, ...prev]);
+
     if (onAddHistory) {
-      const today = new Date().toISOString().split('T')[0];
       onAddHistory({
         tooth_number: selectedTooth,
         procedure: label,
-        notes: '',
+        notes: historyNotes,
         date: today,
       }).catch((error) => {
         console.error('Error adding tooth history:', error);
@@ -414,81 +651,151 @@ export const Odontogram: React.FC<OdontogramProps> = ({
     }
   };
 
-  const renderTooth = (num: number) => (
-    <Tooth
-      key={num}
-      number={num}
-      status={getToothStatus(num)}
-      selected={(selectedTooth === num && isMenuOpen) || highlightedToothNumber === num}
-      isInTreatment={activeToothSet.has(num)}
-      hasDiagnosis={['decay', 'fracture'].includes(getToothStatus(num))}
-      isCompleted={['root_canal_done', 'extraction_done'].includes(getToothStatus(num))}
-      isPriority={priorityToothNumber === num}
-      disabled={readOnly}
-      onClick={(event) => handleToothClick(num, event)}
-      onHover={(event, toothNumber) => {
-        if (isMobile) return;
-        setHoveredTooth(toothNumber);
-        setHoverRect(event.currentTarget.getBoundingClientRect());
-      }}
-      onLeave={() => {
-        if (isMenuOpen) return;
-        setHoveredTooth(null);
-        setHoverRect(null);
+  const renderTooth = (num: number) => {
+    const toothStatus = getToothStatus(num);
+    const flags = deriveToothFlags(num);
+    return (
+      <Tooth
+        key={num}
+        number={num}
+        status={toothStatus}
+        selected={(selectedTooth === num && isMenuOpen) || highlightedToothNumber === num}
+        isInTreatment={flags.isInTreatment}
+        hasDiagnosis={['decay', 'fracture'].includes(toothStatus)}
+        isCompleted={flags.isCompleted}
+        isPending={flags.isPending}
+        isUrgent={flags.isUrgent}
+        isPriority={priorityToothNumber === num}
+        disabled={readOnly}
+        onClick={(event) => handleToothClick(num, event)}
+        onHover={(event, toothNumber) => {
+          if (isMobile) return;
+          setHoveredTooth(toothNumber);
+          setHoverRect(event.currentTarget.getBoundingClientRect());
+        }}
+        onLeave={() => {
+          if (isMenuOpen) return;
+          setHoveredTooth(null);
+          setHoverRect(null);
       }}
       buttonRef={(el) => {
         toothRefs.current[num] = el;
       }}
     />
-  );
+    );
+  };
 
   return (
-    <div className="space-y-7 p-2 sm:p-3 bg-transparent rounded-none shadow-none border-none">
-      <div className="flex items-start justify-between gap-3 px-1">
-        <div>
-          <h3 className="text-lg sm:text-[22px] font-extrabold tracking-[-0.015em] text-slate-950">Visão dentária</h3>
-          <p className="text-xs sm:text-sm leading-6 text-slate-700">Clique em um dente para abrir o menu rapido de acoes.</p>
+    <div className="space-y-5 p-1 sm:p-2 bg-transparent rounded-none shadow-none border-none">
+      <div className="overflow-x-auto pb-2">
+        <div className="mx-auto min-w-max space-y-5">
+          {/* Upper Jaw */}
+          <div className="rounded-[22px] sm:rounded-[24px] border border-slate-200/80 bg-white/80 px-2.5 py-2.5 sm:px-4 sm:py-3.5">
+            <div className="flex items-center justify-center gap-2 sm:gap-3">
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-slate-50/60 p-1.5 sm:p-2.5">
+                <div className="flex gap-1.5">
+                  {toothNumbers.upperRight.map(renderTooth)}
+                </div>
+              </div>
+
+              <div className="flex h-[4.1rem] sm:h-[5.2rem] w-2.5 sm:w-4 items-center justify-center">
+                <span className="h-full w-px bg-slate-200" />
+              </div>
+
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-slate-50/60 p-1.5 sm:p-2.5">
+                <div className="flex gap-1.5">
+                  {toothNumbers.upperLeft.map(renderTooth)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center px-4">
+            <span className="h-px w-20 bg-slate-200" />
+          </div>
+
+          {/* Lower Jaw */}
+          <div className="rounded-[22px] sm:rounded-[24px] border border-slate-200/80 bg-white/80 px-2.5 py-2.5 sm:px-4 sm:py-3.5">
+            <div className="flex items-center justify-center gap-2 sm:gap-3">
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-slate-50/60 p-1.5 sm:p-2.5">
+                <div className="flex gap-1.5">
+                  {[...toothNumbers.lowerRight].reverse().map(renderTooth)}
+                </div>
+              </div>
+
+              <div className="flex h-[4.1rem] sm:h-[5.2rem] w-2.5 sm:w-4 items-center justify-center">
+                <span className="h-full w-px bg-slate-200" />
+              </div>
+
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-slate-50/60 p-1.5 sm:p-2.5">
+                <div className="flex gap-1.5">
+                  {[...toothNumbers.lowerLeft].reverse().map(renderTooth)}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-col gap-8 overflow-x-auto pb-3 bg-gradient-to-b from-white/60 to-transparent rounded-[28px]">
-        {/* Upper Jaw */}
-        <div className="flex justify-center gap-1.5 min-w-max">
-          <div className="flex gap-1.5 border-r border-slate-200 pr-3">
-            {toothNumbers.upperRight.map(renderTooth)}
-          </div>
-          <div className="flex gap-1.5 pl-3">
-            {toothNumbers.upperLeft.map(renderTooth)}
-          </div>
-        </div>
-
-        {/* Lower Jaw */}
-        <div className="flex justify-center gap-1.5 min-w-max">
-          <div className="flex gap-1.5 border-r border-slate-200 pr-3">
-            {[...toothNumbers.lowerRight].reverse().map(renderTooth)}
-          </div>
-          <div className="flex gap-1.5 pl-3">
-            {[...toothNumbers.lowerLeft].reverse().map(renderTooth)}
-          </div>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 pt-4 border-t border-slate-200/80">
-        {(Object.entries(statusLabels) as [ToothStatus, string][]).map(([status, label]) => (
-          <div key={status} className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/80 border border-slate-200/80 transition-all duration-200 hover:bg-white hover:shadow-sm">
-            <div className={`w-2.5 h-2.5 rounded-full border-none ${statusColors[status].split(' ')[0]}`} />
-            <span className="text-[9px] font-bold text-slate-700 uppercase tracking-wider leading-tight">{label}</span>
+      <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-200/80">
+        {legendItems.map((item) => (
+          <div key={item.key} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5">
+            <span className={`relative h-3 w-3 rounded-[4px] ${item.swatchClass}`}>
+              {item.markerClass && (
+                <span
+                  className={`absolute ${item.markerPosition === 'top' ? '-top-1 -right-1' : '-bottom-1 -right-1'} h-2 w-2 rounded-full border border-white ${item.markerClass}`}
+                />
+              )}
+            </span>
+            <span className="text-[11px] font-medium text-slate-500">{item.label}</span>
           </div>
         ))}
       </div>
+
+      {/* Clinical insight summary */}
+      {(() => {
+        const allTeeth = [...toothNumbers.upperRight, ...toothNumbers.upperLeft, ...toothNumbers.lowerLeft, ...toothNumbers.lowerRight];
+        const urgentTeeth = allTeeth.filter(n => deriveToothFlags(n).isUrgent);
+        const pendingTeeth = allTeeth.filter(n => deriveToothFlags(n).isPending);
+        const completedTeeth = allTeeth.filter(n => deriveToothFlags(n).isCompleted);
+        if (pendingTeeth.length === 0 && urgentTeeth.length === 0 && completedTeeth.length === 0) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-3 px-1">
+            {urgentTeeth.length > 0 && (
+              <div className="flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200 px-3 py-2">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
+                <span className="text-[11px] font-bold text-rose-700">
+                  {urgentTeeth.length} urgente{urgentTeeth.length > 1 ? 's' : ''}: {urgentTeeth.slice(0, 4).join(', ')}{urgentTeeth.length > 4 ? '…' : ''}
+                </span>
+              </div>
+            )}
+            {pendingTeeth.length > urgentTeeth.length && (
+              <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                <span className="text-[11px] font-bold text-amber-700">
+                  {pendingTeeth.length - urgentTeeth.length} pendente{(pendingTeeth.length - urgentTeeth.length) > 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
+            {completedTeeth.length > 0 && (
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-[11px] font-bold text-emerald-700">
+                  {completedTeeth.length} concluído{completedTeeth.length > 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <ActionMenu
         open={isMenuOpen}
         selectedTooth={selectedTooth}
         selectedStatus={selectedTooth !== null ? getToothStatus(selectedTooth) : 'healthy'}
-        hasTreatment={selectedTooth !== null ? treatmentByTooth.has(selectedTooth) : false}
-        currentProcedure={selectedTooth !== null ? treatmentByTooth.get(selectedTooth)?.procedure : undefined}
+        hasTreatment={selectedTooth !== null ? treatmentsByTooth.has(selectedTooth) : false}
+        currentProcedure={selectedTooth !== null ? treatmentsByTooth.get(selectedTooth)?.[0]?.procedure : undefined}
+        toothHistory={selectedTooth !== null ? historyByTooth.get(selectedTooth) || [] : []}
         mobile={isMobile}
         anchorRect={anchorRect}
         onClose={() => setIsMenuOpen(false)}
@@ -497,15 +804,14 @@ export const Odontogram: React.FC<OdontogramProps> = ({
 
       {!isMobile && hoveredTooth !== null && hoverRect && (
         <div
-          className="fixed z-[9998] pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_16px_34px_rgba(15,23,42,0.16)]"
+          className="fixed z-[9998] pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_14px_30px_rgba(15,23,42,0.12)]"
           style={{
             top: hoverRect.top - 70,
             left: Math.max(10, hoverRect.left - 12),
           }}
         >
-          <p className="text-xs font-bold text-slate-900">Dente {hoveredTooth}</p>
-          <p className="text-[11px] text-slate-600">Procedimento: {treatmentByTooth.get(hoveredTooth)?.procedure || 'Nao definido'}</p>
-          <p className="text-[11px] text-slate-600">Status: {statusLabels[getToothStatus(hoveredTooth)]}</p>
+          <p className="text-xs font-semibold text-slate-900">Dente {hoveredTooth}</p>
+          <p className="text-[11px] text-slate-500">{treatmentsByTooth.get(hoveredTooth)?.[0]?.procedure || statusLabels[getToothStatus(hoveredTooth)]}</p>
         </div>
       )}
     </div>

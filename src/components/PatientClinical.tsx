@@ -25,6 +25,8 @@ interface PatientClinicalProps {
   appointments: any[];
   onUpdatePatient: (updatedPatient: any) => Promise<void>;
   onAddEvolution: (evolutionData: any) => Promise<void>;
+  onRefreshPatient?: () => Promise<void>;
+  apiFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   setAppActiveTab: (tab: any) => void;
   navigate: any;
 }
@@ -32,7 +34,6 @@ interface PatientClinicalProps {
 type InfoTab = 'anamneses' | 'dados' | 'imagens' | 'financeiro';
 
 type ClinicalStatus = 'EM_TRATAMENTO' | 'REVISAO' | 'ABANDONADO' | 'NOVO';
-type GlobalCareState = 'URGENTE' | 'EM_TRATAMENTO' | 'ESTAVEL';
 
 const statusConfig: Record<ClinicalStatus, { label: string; className: string }> = {
   EM_TRATAMENTO: {
@@ -65,12 +66,32 @@ const getAge = (birthDate?: string) => {
   return age;
 };
 
-const resolveSexLabel = (patient: any) => {
-  const raw = String(patient?.sex || patient?.gender || '').toLowerCase();
-  if (!raw) return 'Sexo n/i';
-  if (raw.startsWith('m')) return 'Masculino';
-  if (raw.startsWith('f')) return 'Feminino';
-  return patient?.sex || patient?.gender;
+const formatTime = (dateValue?: string) => {
+  if (!dateValue) return '';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatCurrencyInputBRL = (value: string) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '0,00';
+  const cents = Number(digits);
+  const amount = cents / 100;
+  return amount.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const parseCurrencyInputBRL = (value: string) => {
+  const normalized = String(value || '').replace(/\./g, '').replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
 };
 
 const resolveClinicalStatus = (patient: any, appointments: any[]): ClinicalStatus => {
@@ -146,29 +167,13 @@ const resolveClinicalEventType = (entry: any): ClinicalEventType => {
   return 'OBSERVATION';
 };
 
-const globalStateConfig: Record<GlobalCareState, { label: string; tone: string; helper: string }> = {
-  URGENTE: {
-    label: 'Urgente',
-    tone: 'bg-rose-100 text-rose-900 border border-rose-300',
-    helper: 'Demanda decisão clínica imediata',
-  },
-  EM_TRATAMENTO: {
-    label: 'Em tratamento',
-    tone: 'bg-amber-100 text-amber-900 border border-amber-300',
-    helper: 'Existe conduta ativa em andamento',
-  },
-  ESTAVEL: {
-    label: 'Estável',
-    tone: 'bg-emerald-100 text-emerald-900 border border-emerald-300',
-    helper: 'Sem pendências críticas no momento',
-  },
-};
-
 export const PatientClinical: React.FC<PatientClinicalProps> = ({
   patient,
   appointments,
   onUpdatePatient,
   onAddEvolution,
+  onRefreshPatient,
+  apiFetch,
   setAppActiveTab,
   navigate: appNavigate,
 }) => {
@@ -179,16 +184,29 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   const [highlightedTimelineId, setHighlightedTimelineId] = useState<string | null>(null);
   const [highlightedToothNumber, setHighlightedToothNumber] = useState<number | null>(null);
   const [selectedTreatmentAction, setSelectedTreatmentAction] = useState<any | null>(null);
+  const [editingValues, setEditingValues] = useState<Record<string, string>>({});
   const [optimisticOdontogram, setOptimisticOdontogram] = useState<Record<number, any>>({});
   const [optimisticTreatments, setOptimisticTreatments] = useState<any[]>([]);
   const [optimisticEvolutions, setOptimisticEvolutions] = useState<any[]>([]);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isUploadingProfilePhoto, setIsUploadingProfilePhoto] = useState(false);
+  const [isUploadingClinicalImage, setIsUploadingClinicalImage] = useState(false);
+  const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
   const infoPanelRef = useRef<HTMLElement | null>(null);
   const odontogramRef = useRef<HTMLElement | null>(null);
+  const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const clinicalImageInputRef = useRef<HTMLInputElement | null>(null);
 
   const age = getAge(patient?.birth_date);
-  const sexLabel = resolveSexLabel(patient);
   const clinicalStatus = resolveClinicalStatus(patient, appointments);
   const clinicalBadge = statusConfig[clinicalStatus];
+  const patientAppointments = useMemo(
+    () =>
+      (appointments || [])
+        .filter((appointment: any) => appointment.patient_id === patient?.id)
+        .filter((appointment: any) => !['CANCELLED', 'NO_SHOW'].includes(String(appointment.status || '').toUpperCase())),
+    [appointments, patient?.id]
+  );
 
   const mergedTreatmentPlan = useMemo(() => {
     const serverItems = patient?.treatmentPlan || [];
@@ -249,28 +267,73 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     [patient?.odontogram, optimisticOdontogram]
   );
 
+  const persistTreatmentValue = async (treatmentId: string, rawValue: string) => {
+    const normalized = String(rawValue || '').trim();
+    if (!normalized) return;
+
+    const parsed = parseCurrencyInputBRL(normalized);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+
+    const nextPlan = (mergedTreatmentPlan || []).map((item: any) =>
+      item.id === treatmentId
+        ? { ...item, value: parsed, updated_at: new Date().toISOString() }
+        : item
+    );
+
+    setOptimisticTreatments((prev) => {
+      const ids = new Set(nextPlan.map((item: any) => item.id));
+      const prevOnly = prev.filter((item: any) => !ids.has(item.id));
+      return [...prevOnly, ...nextPlan];
+    });
+
+    try {
+      await onUpdatePatient({
+        ...patient,
+        treatmentPlan: nextPlan,
+      });
+    } catch (error) {
+      console.error('Error updating treatment value:', error);
+    }
+  };
+
   const handleOdontogramStatusChange = (toothNumber: number, toothData: any) => {
     setOptimisticOdontogram((prev) => ({ ...prev, [toothNumber]: toothData }));
 
-    const updatedPatient = {
-      ...patient,
-      odontogram: {
-        ...(patient?.odontogram || {}),
-        [toothNumber]: toothData,
-      },
+    const updatedOdontogram = {
+      ...(patient?.odontogram || {}),
+      [toothNumber]: toothData,
     };
 
-    onUpdatePatient(updatedPatient)
-      .then(() => {
-        setOptimisticOdontogram((prev) => {
-          const next = { ...prev };
-          delete next[toothNumber];
-          return next;
-        });
+    apiFetch(`/api/patients/${patient.id}/odontogram`, {
+      method: 'POST',
+      body: JSON.stringify({ data: updatedOdontogram }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || 'Falha ao salvar odontograma');
+        }
       })
       .catch((error) => {
         console.error('Error updating odontogram tooth status:', error);
       });
+  };
+
+  const persistEvolution = async (payload: { notes: string; procedure_performed: string }) => {
+    const res = await apiFetch(`/api/patients/${patient.id}/evolution`, {
+      method: 'POST',
+      body: JSON.stringify({
+        notes: payload.notes,
+        procedure_performed: payload.procedure_performed,
+        materials: '',
+        observations: '',
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error || 'Falha ao salvar evolução clínica');
+    }
   };
 
   const handleOdontoProcedureSelect = async ({
@@ -306,11 +369,18 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       (item: any) => Number(item.tooth_number) === toothNumber && ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase())
     );
 
+    const isCompletionAction =
+      mode === 'continuity' &&
+      !!existingTreatment &&
+      ['root_canal_done', 'extraction_done'].includes(String(status || '').toLowerCase());
+
     const nextTreatmentPlan = category === 'procedure'
       ? mode === 'continuity' && existingTreatment
         ? (patient.treatmentPlan || []).map((item: any) =>
             item.id === existingTreatment.id
-              ? { ...item, status: 'APROVADO', updated_at: nowIso }
+              ? isCompletionAction
+                ? { ...item, status: 'REALIZADO', completed_at: nowIso, updated_at: nowIso }
+                : { ...item, status: 'APROVADO', updated_at: nowIso }
               : item
           )
         : [
@@ -332,7 +402,9 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
     const optimisticTreatment = category === 'procedure'
       ? mode === 'continuity' && existingTreatment
-        ? { ...existingTreatment, status: 'APROVADO', updated_at: nowIso }
+        ? isCompletionAction
+          ? { ...existingTreatment, status: 'REALIZADO', completed_at: nowIso, updated_at: nowIso }
+          : { ...existingTreatment, status: 'APROVADO', updated_at: nowIso }
         : {
             id: treatmentId,
             tooth_number: toothNumber,
@@ -344,27 +416,35 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       : null;
 
     const shouldAppendEvolution = category === 'procedure';
+    const evolutionType = isCompletionAction
+      ? 'PROCEDURE_COMPLETION'
+      : mode === 'continuity' && existingTreatment
+        ? 'PLAN_CHANGE'
+        : 'TREATMENT_START';
+    const evolutionNotes = isCompletionAction
+      ? `Procedimento concluído no dente ${toothNumber}: ${existingTreatment?.procedure || procedure}.`
+      : mode === 'continuity' && existingTreatment
+        ? `Plano ajustado no dente ${toothNumber}: ${existingTreatment.procedure} convertido para ${procedure}.`
+        : `Início de tratamento no dente ${toothNumber}: ${procedure}.`;
+    const evolutionProcedure = isCompletionAction
+      ? `Conclusão - ${existingTreatment?.procedure || procedure}`
+      : mode === 'continuity' && existingTreatment
+        ? `Conversão - ${existingTreatment.procedure} -> ${procedure}`
+        : `Início - ${procedure}`;
+    const evolutionProcedurePerformed = isCompletionAction
+      ? `Conclusão - ${existingTreatment?.procedure || procedure}`
+      : mode === 'continuity' && existingTreatment
+        ? `Conversão de plano`
+        : `Início de tratamento`;
 
     const optimisticEvolution = shouldAppendEvolution
       ? {
           id: evolutionId,
           date: nowIso,
-          notes:
-            mode === 'continuity' && existingTreatment
-              ? `Plano ajustado no dente ${toothNumber}: ${existingTreatment.procedure} convertido para ${procedure}.`
-              : `Início de tratamento no dente ${toothNumber}: ${procedure}.`,
-          procedure_performed:
-            mode === 'continuity' && existingTreatment
-              ? `Conversão de plano`
-              : `Início de tratamento`,
-          procedure:
-            mode === 'continuity' && existingTreatment
-              ? `Conversão - ${existingTreatment.procedure} -> ${procedure}`
-              : `Início - ${procedure}`,
-          event_type:
-            mode === 'continuity' && existingTreatment
-              ? 'PLAN_CHANGE'
-              : 'TREATMENT_START',
+          notes: evolutionNotes,
+          procedure_performed: evolutionProcedurePerformed,
+          procedure: evolutionProcedure,
+          event_type: evolutionType,
         }
       : null;
 
@@ -389,22 +469,10 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
             {
               id: evolutionId,
               date: nowIso,
-              notes:
-                mode === 'continuity' && existingTreatment
-                  ? `Plano ajustado no dente ${toothNumber}: ${existingTreatment.procedure} convertido para ${procedure}.`
-                  : `Início de tratamento no dente ${toothNumber}: ${procedure}.`,
-              procedure_performed:
-                mode === 'continuity' && existingTreatment
-                  ? `Conversão de plano`
-                  : `Início de tratamento`,
-              procedure:
-                mode === 'continuity' && existingTreatment
-                  ? `Conversão - ${existingTreatment.procedure} -> ${procedure}`
-                  : `Início - ${procedure}`,
-              event_type:
-                mode === 'continuity' && existingTreatment
-                  ? 'PLAN_CHANGE'
-                  : 'TREATMENT_START',
+              notes: evolutionNotes,
+              procedure_performed: evolutionProcedurePerformed,
+              procedure: evolutionProcedure,
+              event_type: evolutionType,
             },
             ...(patient.evolution || []),
           ]
@@ -415,6 +483,15 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       await onUpdatePatient(updatedPatient);
     } catch (error) {
       console.error('Error applying odontogram action:', error);
+    }
+
+    if (shouldAppendEvolution) {
+      persistEvolution({
+        notes: evolutionNotes,
+        procedure_performed: evolutionProcedurePerformed,
+      }).catch((error) => {
+        console.error('Error persisting evolution from odontogram action:', error);
+      });
     }
 
     if (nextTreatmentId) setHighlightedTreatmentId(nextTreatmentId);
@@ -461,6 +538,38 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       await onUpdatePatient(updatedPatient);
     } catch (error) {
       console.error('Error completing treatment:', error);
+    }
+
+    persistEvolution({
+      notes: evolutionEntry.notes,
+      procedure_performed: evolutionEntry.procedure_performed,
+    }).catch((error) => {
+      console.error('Error persisting completion evolution:', error);
+    });
+
+    if (Number.isFinite(Number(treatment.tooth_number))) {
+      const toothNumber = Number(treatment.tooth_number);
+      const procedureText = String(treatment.procedure || '').toLowerCase();
+      const completionStatus =
+        procedureText.includes('canal')
+          ? 'root_canal_done'
+          : procedureText.includes('extr')
+            ? 'extraction_done'
+            : null;
+
+      if (completionStatus) {
+        handleOdontogramStatusChange(toothNumber, {
+          status: completionStatus,
+          notes: 'Procedimento concluído.',
+        });
+      }
+
+      handleAddToothHistory({
+        tooth_number: toothNumber,
+        procedure: String(treatment.procedure || 'Procedimento'),
+        notes: 'Procedimento concluído.',
+        date: nowIso.split('T')[0],
+      });
     }
 
     setSelectedTreatmentAction(null);
@@ -511,6 +620,13 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       console.error('Error converting treatment:', error);
     }
 
+    persistEvolution({
+      notes: evolutionEntry.notes,
+      procedure_performed: evolutionEntry.procedure_performed,
+    }).catch((error) => {
+      console.error('Error persisting conversion evolution:', error);
+    });
+
     setSelectedTreatmentAction(null);
     setHighlightedTreatmentId(treatment.id);
     setHighlightedTimelineId(`evo-${evolutionId}`);
@@ -520,6 +636,22 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     }
     window.setTimeout(() => setHighlightedTreatmentId(null), 2200);
     window.setTimeout(() => setHighlightedTimelineId(null), 2200);
+  };
+
+  const handleAddToothHistory = async (record: { tooth_number: number; procedure: string; notes: string; date: string }) => {
+    try {
+      const res = await apiFetch(`/api/patients/${patient.id}/tooth-history`, {
+        method: 'POST',
+        body: JSON.stringify(record),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Falha ao salvar histórico dentário');
+      }
+    } catch (error) {
+      console.error('Error adding tooth history:', error);
+    }
   };
 
   const patientFiles = patient?.files || [];
@@ -533,6 +665,88 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     requestAnimationFrame(() => {
       infoPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+  };
+
+  const handleProfilePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !patient?.id) return;
+
+    setIsUploadingProfilePhoto(true);
+    setUploadFeedback(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await apiFetch(`/api/patients/${patient.id}/photo`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Falha ao enviar foto do paciente');
+      }
+
+      await onRefreshPatient?.();
+      setUploadFeedback('Foto do paciente atualizada.');
+    } catch (error) {
+      console.error('Error uploading patient profile image:', error);
+      setUploadFeedback('Não foi possível enviar a foto do paciente.');
+    } finally {
+      setIsUploadingProfilePhoto(false);
+      event.target.value = '';
+    }
+  };
+
+  const handleClinicalImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !patient?.id) return;
+
+    const allowedMimeTypes = new Set([
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'application/pdf',
+    ]);
+
+    if (!allowedMimeTypes.has(file.type)) {
+      setUploadFeedback('Formato inválido. Envie JPG, PNG, WEBP, GIF ou PDF.');
+      event.target.value = '';
+      return;
+    }
+
+    setIsUploadingClinicalImage(true);
+    setUploadFeedback(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('description', file.name || 'Imagem/RX clínico');
+      formData.append('file_type', file.type === 'application/pdf' ? 'pdf' : 'image');
+
+      const res = await apiFetch(`/api/patients/${patient.id}/files`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Falha ao enviar imagem/RX. Verifique o formato e tamanho (máx. 5MB).');
+      }
+
+      await onRefreshPatient?.();
+      setInfoTab('imagens');
+      setUploadFeedback('Imagem/RX anexada com sucesso.');
+    } catch (error) {
+      console.error('Error uploading patient clinical image:', error);
+      const message = error instanceof Error ? error.message : 'Não foi possível anexar imagem/RX.';
+      setUploadFeedback(message);
+    } finally {
+      setIsUploadingClinicalImage(false);
+      event.target.value = '';
+    }
   };
 
   const focusOdontogram = () => {
@@ -555,129 +769,183 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     return Number.isFinite(toothNumber) && toothNumber > 0 ? toothNumber : null;
   }, [treatmentInProgress]);
 
-  const globalCareState = useMemo<GlobalCareState>(() => {
-    const hasUrgent = treatmentInProgress.some((item: any) => {
-      const status = String(item.status || '').toUpperCase();
-      return status === 'PENDENTE';
-    });
-    if (hasUrgent) return 'URGENTE';
-    if (treatmentInProgress.length > 0 || clinicalStatus === 'EM_TRATAMENTO') return 'EM_TRATAMENTO';
-    return 'ESTAVEL';
-  }, [treatmentInProgress, clinicalStatus]);
+  const upcomingAppointment = useMemo(
+    () =>
+      [...patientAppointments]
+        .filter((appointment: any) => new Date(appointment.start_time).getTime() >= Date.now())
+        .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0] || null,
+    [patientAppointments]
+  );
 
-  const globalCare = globalStateConfig[globalCareState];
+  const primaryTreatment = treatmentInProgress[0] || null;
+  const primaryActionTitle = primaryTreatment
+    ? `${primaryTreatment.procedure}${primaryTreatment.tooth_number ? ` • dente ${primaryTreatment.tooth_number}` : ''}`
+    : upcomingAppointment
+      ? 'Preparar atendimento agendado'
+      : 'Começar pelo odontograma';
+  const primaryActionHelper = primaryTreatment
+    ? String(primaryTreatment.status || '').toUpperCase() === 'PENDENTE'
+      ? 'Valide a prioridade e confirme a conduta antes de seguir.'
+      : 'Este é o foco clínico principal para o atendimento atual.'
+    : upcomingAppointment
+      ? 'A consulta já está marcada. Revise o caso e registre a evolução ao finalizar.'
+      : 'Mapeie a condição dentária primeiro para orientar o próximo procedimento.';
+  const primaryActionButtonLabel = primaryTreatment ? 'Abrir tratamento atual' : 'Ir para odontograma';
 
   const iosCard =
-    'bg-white border border-slate-200/80 shadow-[0_14px_38px_rgba(15,23,42,0.08),0_2px_10px_rgba(15,23,42,0.04)]';
+    'bg-white/92 border border-slate-200/70 shadow-[0_8px_24px_rgba(15,23,42,0.05)]';
   const iosSubtleCard =
-    'bg-slate-50/90 border border-slate-200/80';
+    'bg-slate-50/70 border border-slate-200/70';
 
   return (
-    <div className="min-h-screen bg-[#F4F7F6] pb-24 text-slate-900">
-      <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/92 backdrop-blur-xl">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+    <div className="min-h-screen bg-[#F7F7F8] pb-24 text-slate-900">
+      <header className="sticky top-0 z-40 border-b border-white/60 bg-[#F4F7F6]/90 backdrop-blur-2xl">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
+          <div className="rounded-[30px] border border-slate-200/70 bg-white/88 px-4 py-4 sm:px-5 sm:py-5 shadow-[0_12px_34px_rgba(15,23,42,0.06)]">
+            <div className="flex items-start justify-between gap-3">
               <button
                 onClick={() => {
                   setAppActiveTab('pacientes');
                   appNavigate('/pacientes');
                 }}
-                className="p-2.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors duration-200 hover:text-slate-900"
                 aria-label="Voltar para pacientes"
               >
                 <ArrowLeft size={18} />
               </button>
 
-              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-50 to-slate-100 flex items-center justify-center shrink-0 border border-slate-200 shadow-[0_10px_24px_rgba(15,23,42,0.08)]">
-                {patient?.photo_url ? (
-                  <img src={patient.photo_url} alt={patient?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <span className="text-slate-700 font-extrabold text-lg">
-                    {String(patient?.name || 'P')
-                      .split(' ')
-                      .filter(Boolean)
-                      .slice(0, 2)
-                      .map((n: string) => n[0].toUpperCase())
-                      .join('')}
-                  </span>
-                )}
-              </div>
-
-              <div className="min-w-0">
-                <h1 className="text-[27px] sm:text-[33px] leading-tight tracking-[-0.02em] font-extrabold text-slate-950 truncate">{patient?.name}</h1>
-                <p className="text-sm leading-6 text-slate-700 mt-1">
-                  {age !== null ? `${age} anos` : 'Idade n/i'} • {sexLabel}
-                </p>
-              </div>
-            </div>
-
-            <div className="shrink-0 text-right">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600 mb-1">Status clínico</p>
-              <span className={`inline-flex px-3.5 py-1.5 rounded-full text-[11px] font-extrabold tracking-[0.08em] shadow-sm ${clinicalBadge.className}`}>
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
                 {clinicalBadge.label}
               </span>
             </div>
-          </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Ações rápidas</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => setIsAddingEvolution(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-extrabold shadow-[0_14px_28px_rgba(12,155,114,0.28)] hover:opacity-95 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
-              >
-                <Activity size={15} />
-                Nova evolução
-              </button>
-              <button
-                onClick={() => {
-                  setAppActiveTab('agenda');
-                  appNavigate('/agenda');
-                }}
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white text-slate-700 text-xs font-bold border border-slate-200 shadow-[0_6px_18px_rgba(15,23,42,0.04)] hover:bg-slate-50 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
-              >
-                <Calendar size={15} />
-                Agendar
-              </button>
-              <button
-                onClick={openImagesTab}
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white text-slate-700 text-xs font-bold border border-slate-200 shadow-[0_6px_18px_rgba(15,23,42,0.04)] hover:bg-slate-50 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
-              >
-                <Camera size={15} />
-                Imagens/RX
-              </button>
+            <div className="mt-4 flex items-center gap-3 min-w-0">
+              <div className="relative w-13 h-13 sm:w-14 sm:h-14 shrink-0">
+                <div className="w-full h-full rounded-[20px] overflow-hidden bg-slate-100 flex items-center justify-center border border-slate-200/80">
+                  {patient?.photo_url ? (
+                    <img src={patient.photo_url} alt={patient?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="text-slate-700 font-bold text-base">
+                      {String(patient?.name || 'P')
+                        .split(' ')
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((n: string) => n[0].toUpperCase())
+                        .join('')}
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => profilePhotoInputRef.current?.click()}
+                  className="absolute -bottom-1 -right-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:text-slate-900 disabled:opacity-60"
+                  aria-label="Enviar foto do paciente"
+                  disabled={isUploadingProfilePhoto}
+                >
+                  <Camera size={13} />
+                </button>
+
+                <input
+                  ref={profilePhotoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePhotoUpload}
+                  className="hidden"
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <h1 className="text-[27px] sm:text-[32px] leading-[1.04] tracking-[-0.03em] font-semibold text-slate-950 truncate">{patient?.name}</h1>
+                <p className="mt-1 text-sm text-slate-500">{age !== null ? `${age} anos` : 'Idade n/i'} • {clinicalBadge.label}</p>
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">Estado global do paciente</p>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <span className={`inline-flex w-fit rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.08em] ${globalCare.tone}`}>
-                {globalCare.label}
-              </span>
-              <p className="text-xs text-slate-600">{globalCare.helper}</p>
+            <div className="mt-5 border-t border-slate-100 pt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Próximo passo</p>
+                <p className="mt-2 text-[22px] sm:text-[26px] leading-[1.12] tracking-[-0.03em] font-semibold text-slate-950">{primaryActionTitle}</p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{primaryActionHelper}</p>
+                {upcomingAppointment && (
+                  <p className="mt-3 text-xs font-medium text-slate-400">
+                    Próxima consulta em {formatDate(upcomingAppointment.start_time)} às {formatTime(upcomingAppointment.start_time)}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center rounded-full border border-slate-200 bg-white p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsFocusMode(true)}
+                    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${
+                      isFocusMode ? 'bg-slate-950 text-white' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Foco
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFocusMode(false)}
+                    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${
+                      !isFocusMode ? 'bg-slate-950 text-white' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Completo
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (primaryTreatment) {
+                      setHighlightedTreatmentId(primaryTreatment.id);
+                      window.setTimeout(() => setHighlightedTreatmentId(null), 2200);
+                    }
+                    focusOdontogram();
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white transition-all duration-200 hover:bg-slate-900 active:scale-[0.98]"
+                >
+                  <Activity size={15} />
+                  {primaryActionButtonLabel}
+                </button>
+                <button
+                  onClick={() => setIsAddingEvolution(true)}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition-colors duration-200 hover:text-slate-900"
+                >
+                  <Activity size={14} />
+                  Evolução
+                </button>
+                <button
+                  onClick={openImagesTab}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition-colors duration-200 hover:text-slate-900"
+                >
+                  <Camera size={14} />
+                  Imagens
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-7 space-y-7">
-        <section ref={odontogramRef} className="rounded-[34px] p-4 sm:p-5 border border-emerald-200/60 bg-gradient-to-br from-white via-white to-emerald-50/70 shadow-[0_24px_60px_rgba(15,23,42,0.10),0_10px_24px_rgba(12,155,114,0.12)]">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-7 space-y-6">
+
+        <section ref={odontogramRef} className="rounded-[30px] p-4 sm:p-5 border border-slate-200/70 bg-white/92 shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h2 className="text-[24px] sm:text-[30px] font-extrabold tracking-[-0.02em] text-slate-950">Odontograma</h2>
-              <p className="text-sm leading-6 text-slate-700">Mapa clínico principal para decisão imediata</p>
+              <h2 className="text-[24px] sm:text-[28px] font-semibold tracking-[-0.02em] text-slate-950">Odontograma</h2>
             </div>
-            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-primary">Interativo</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Interativo</span>
           </div>
 
-          <div className="rounded-[28px] p-1.5 sm:p-2 bg-white/80 ring-1 ring-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+          <div className="rounded-[26px] p-1.5 sm:p-2 bg-slate-50/70 ring-1 ring-slate-100/80">
             <Odontogram
               data={mergedOdontogram}
+              history={patient?.toothHistory || []}
               onChange={handleOdontogramStatusChange}
+              onAddHistory={handleAddToothHistory}
               onSelectProcedure={handleOdontoProcedureSelect}
-              treatments={treatmentInProgress}
+              treatments={mergedTreatmentPlan}
               activeToothNumbers={activeToothNumbers}
               priorityToothNumber={priorityToothNumber}
               highlightedToothNumber={highlightedToothNumber}
@@ -685,15 +953,15 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
           </div>
         </section>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1.7fr_1fr] gap-6">
+        <div className={`grid grid-cols-1 gap-6 ${isFocusMode ? '' : 'xl:grid-cols-[1.7fr_1fr]'}`}>
           <div className="space-y-6">
-            <section className="rounded-[30px] border border-primary/25 bg-gradient-to-br from-white via-white to-primary/5 p-7 sm:p-8 shadow-[0_24px_55px_rgba(12,155,114,0.16),0_10px_30px_rgba(15,23,42,0.08)]">
+            <section className="rounded-[28px] border border-slate-200/70 bg-white/92 p-5 sm:p-6 shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-xl sm:text-2xl font-extrabold tracking-[-0.02em] text-slate-950">Tratamento atual</h3>
-                  <p className="text-xs text-slate-600 mt-0.5">Próximo passo clínico do paciente</p>
+                  <h3 className="text-lg sm:text-xl font-semibold tracking-[-0.02em] text-slate-950">Tratamento atual</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Próximo passo clínico do paciente</p>
                 </div>
-                <span className="text-xs text-primary font-extrabold uppercase tracking-[0.12em]">Foco principal</span>
+                <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-[0.12em]">Foco</span>
               </div>
 
               <div className="space-y-3">
@@ -703,46 +971,68 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                     const rawStatus = String(item.status || '').toUpperCase();
                     const itemBadge =
                       rawStatus === 'APROVADO'
-                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                        ? 'bg-slate-100 text-slate-700 border border-slate-200'
                         : rawStatus === 'PENDENTE'
-                          ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                          : 'bg-indigo-100 text-indigo-900 border border-indigo-200';
+                          ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                          : 'bg-slate-100 text-slate-700 border border-slate-200';
 
                     return (
                       <div
                         key={item.id}
-                        className={`rounded-2xl px-4 py-4 flex items-center justify-between gap-3 transition-all duration-300 ${
+                        className={`rounded-2xl px-4 py-4 flex flex-col items-stretch gap-3 transition-all duration-300 sm:flex-row sm:items-center sm:justify-between ${
                           isPriority
-                            ? 'border border-primary/35 bg-gradient-to-br from-white to-primary/5 shadow-[0_20px_40px_rgba(12,155,114,0.16),0_6px_18px_rgba(15,23,42,0.08)]'
+                            ? 'border border-slate-200 bg-slate-50/60 shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
                             : `${iosSubtleCard} hover:border-slate-300`
                         } ${
                           highlightedTreatmentId === item.id
-                            ? 'ring-2 ring-primary/40 bg-primary/5 shadow-[0_20px_36px_rgba(12,155,114,0.18)]'
+                            ? 'ring-2 ring-slate-300 bg-slate-50 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
                             : ''
                         }`}
                       >
-                        <div className="min-w-0">
+                        <div className="min-w-0 w-full">
                           {isPriority && (
-                            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary mb-1">Próximo passo</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Próximo passo</p>
                           )}
                           <p className="font-semibold text-slate-900 text-[15px] sm:text-base leading-6 truncate">
                             {item.procedure} {item.tooth_number ? `dente ${item.tooth_number}` : ''}
                           </p>
-                          <div className="flex items-center gap-2 mt-1.5">
+                          <div className="flex flex-col items-stretch gap-2 mt-1.5 sm:flex-row sm:items-center">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${itemBadge}`}>
                               {rawStatus === 'APROVADO' ? 'Em andamento' : rawStatus === 'PENDENTE' ? 'Pendente' : 'Planejado'}
                             </span>
-                            <span className="text-xs text-slate-500">
-                              {(Number(item.value) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                            </span>
+                            <label className="inline-flex items-center gap-2 text-xs text-slate-500 w-full sm:w-auto">
+                              <span>R$</span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={editingValues[item.id] ?? formatCurrencyInputBRL(String((Number(item.value) || 0) * 100))}
+                                onChange={(event) => {
+                                  const next = formatCurrencyInputBRL(event.target.value);
+                                  setEditingValues((prev) => ({ ...prev, [item.id]: next }));
+                                }}
+                                onBlur={() => {
+                                  const nextRaw = editingValues[item.id] ?? formatCurrencyInputBRL(String((Number(item.value) || 0) * 100));
+                                  persistTreatmentValue(item.id, nextRaw);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    const nextRaw = editingValues[item.id] ?? formatCurrencyInputBRL(String((Number(item.value) || 0) * 100));
+                                    persistTreatmentValue(item.id, nextRaw);
+                                    (event.currentTarget as HTMLInputElement).blur();
+                                  }
+                                }}
+                                className="w-full sm:w-24 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-700 outline-none focus:border-slate-400 min-h-[40px]"
+                                aria-label="Valor do procedimento"
+                              />
+                            </label>
                           </div>
                         </div>
 
                         <button
                           onClick={() => setSelectedTreatmentAction(item)}
-                          className={`shrink-0 px-3 py-2 rounded-xl text-xs font-extrabold transition-all duration-200 active:scale-[0.98] ${
+                          className={`w-full sm:w-auto shrink-0 px-3 py-2.5 rounded-xl text-xs font-extrabold transition-all duration-200 active:scale-[0.98] ${
                             isPriority
-                              ? 'bg-primary text-white border border-primary hover:opacity-95 hover:shadow-[0_10px_20px_rgba(12,155,114,0.24)] hover:scale-[1.01]'
+                              ? 'bg-slate-950 text-white border border-slate-950 hover:bg-slate-900 hover:scale-[1.01]'
                               : 'bg-white text-slate-700 border border-slate-300 hover:border-slate-400 hover:bg-slate-50 hover:scale-[1.01]'
                           }`}
                         >
@@ -754,7 +1044,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                 ) : (
                   <div className={`rounded-2xl py-10 text-center ${iosSubtleCard}`}>
                     <div className="flex flex-col items-center gap-3 px-4">
-                      <div className="w-11 h-11 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600">
+                      <div className="w-11 h-11 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500">
                         <Clock3 size={18} />
                       </div>
                       <p className="text-slate-800 text-sm font-bold">Nenhum tratamento ativo no momento</p>
@@ -771,19 +1061,20 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
               </div>
             </section>
 
-            <section className="rounded-[24px] border border-slate-200 bg-white p-4 sm:p-5 shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
+            {!isFocusMode && (
+            <section className="rounded-[24px] border border-slate-200/70 bg-white/92 p-4 sm:p-5 shadow-[0_8px_22px_rgba(15,23,42,0.05)]">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base sm:text-lg font-bold tracking-[-0.01em] text-slate-900">Evolução clínica</h3>
+                <h3 className="text-base sm:text-lg font-semibold tracking-[-0.01em] text-slate-900">Evolução clínica</h3>
                 <button
                   onClick={() => setIsAddingEvolution(true)}
-                  className="text-xs font-bold text-slate-600 hover:text-slate-800 hover:underline transition-all duration-200"
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline transition-all duration-200"
                 >
                   Nova evolução
                 </button>
               </div>
 
               <div className="space-y-3 relative">
-                {timelineItems.length > 0 && <div className="absolute left-[18px] top-1 bottom-1 w-[2px] rounded-full bg-gradient-to-b from-primary/80 via-primary/35 to-slate-200" />}
+                {timelineItems.length > 0 && <div className="absolute left-[18px] top-1 bottom-1 w-[1px] rounded-full bg-slate-200" />}
                 {timelineItems.length > 0 ? (
                   <>
                     <AnimatePresence initial={false}>
@@ -791,10 +1082,10 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                     const Icon = resolveTimelineIcon(item.title);
                     const statusPill =
                       item.status === 'EM_ANDAMENTO'
-                        ? 'bg-amber-100 text-amber-800'
+                        ? 'bg-slate-100 text-slate-700'
                         : item.status === 'OBSERVACAO'
                           ? 'bg-slate-100 text-slate-700'
-                          : 'bg-emerald-100 text-emerald-800';
+                          : 'bg-slate-100 text-slate-700';
                     const isLatest = idx === 0;
                     const isNewlyAdded = highlightedTimelineId === item.id;
 
@@ -807,20 +1098,20 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                           transition={{ duration: 0.3, ease: 'easeOut' }}
                           className={`rounded-xl p-3 ml-8 transition-all duration-300 ${
                             isNewlyAdded
-                              ? 'bg-primary/5 border border-primary/40 ring-2 ring-primary/25 shadow-[0_18px_34px_rgba(12,155,114,0.20)]'
+                              ? 'bg-slate-50 border border-slate-300 ring-2 ring-slate-200 shadow-[0_12px_24px_rgba(15,23,42,0.05)]'
                               : isLatest
-                                ? 'bg-white border border-primary/20 shadow-[0_12px_24px_rgba(15,23,42,0.08)]'
-                                : 'bg-slate-50/70 border border-slate-200/70 opacity-80 hover:opacity-95'
+                                ? 'bg-white border border-slate-200 shadow-[0_8px_20px_rgba(15,23,42,0.04)]'
+                                : 'bg-slate-50/55 border border-slate-200/70 opacity-85 hover:opacity-100'
                           }`}
                         >
-                          <span className={`absolute left-[12px] mt-3 w-[13px] h-[13px] rounded-full border-2 shadow-sm ${isLatest ? 'bg-primary border-white ring-4 ring-primary/12' : 'bg-white border-slate-400'}`} />
+                          <span className={`absolute left-[12px] mt-3 w-[13px] h-[13px] rounded-full border-2 ${isLatest ? 'bg-slate-900 border-white ring-4 ring-slate-100' : 'bg-white border-slate-300'}`} />
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex gap-3 min-w-0">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${isLatest ? 'bg-primary/12 border-primary/20 text-primary shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${isLatest ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-white border-slate-200 text-slate-500'}`}>
                                 <Icon size={16} />
                               </div>
                               <div className="min-w-0">
-                                {isLatest && <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary mb-1">Último evento</p>}
+                                {isLatest && <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Último evento</p>}
                                 <p className={`leading-5 truncate ${isLatest ? 'text-[15px] font-bold text-slate-950' : 'text-sm font-semibold text-slate-800'}`}>{item.title}</p>
                                 {item.notes && <p className={`text-xs leading-5 mt-0.5 line-clamp-2 ${isLatest ? 'text-slate-700' : 'text-slate-500'}`}>{item.notes}</p>}
                                 <p className={`text-[11px] mt-1 ${isLatest ? 'text-slate-600' : 'text-slate-500'}`}>{formatDate(item.date)}</p>
@@ -840,7 +1131,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                       <div className="pt-1">
                         <button
                           onClick={() => setShowAllEvolutions(prev => !prev)}
-                          className="w-full py-2.5 rounded-xl bg-white text-sm font-bold text-slate-700 border border-slate-200 shadow-sm hover:bg-slate-50 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
+                          className="w-full py-2.5 rounded-xl bg-white text-sm font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
                         >
                           {showAllEvolutions ? 'Mostrar menos' : 'Ver mais'}
                         </button>
@@ -850,14 +1141,14 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                 ) : (
                   <div className={`rounded-2xl py-10 text-center ${iosSubtleCard}`}>
                     <div className="flex flex-col items-center gap-3 px-4">
-                      <div className="w-11 h-11 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600">
+                      <div className="w-11 h-11 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500">
                         <FileText size={18} />
                       </div>
                       <p className="text-slate-800 text-sm font-bold">Ainda não há evoluções registradas</p>
                       <p className="text-slate-600 text-xs">Registre a primeira evolução para iniciar o histórico clínico.</p>
                       <button
                         onClick={() => setIsAddingEvolution(true)}
-                        className="mt-1 px-3.5 py-2 rounded-xl bg-primary text-white text-xs font-extrabold shadow-[0_14px_28px_rgba(12,155,114,0.24)] hover:opacity-95 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
+                        className="mt-1 px-3.5 py-2 rounded-xl bg-slate-950 text-white text-xs font-semibold hover:bg-slate-900 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98]"
                       >
                         Nova evolução
                       </button>
@@ -866,10 +1157,12 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                 )}
               </div>
             </section>
+            )}
           </div>
 
-          <aside ref={infoPanelRef} className={`${iosCard} rounded-[28px] p-4 sm:p-5 h-fit xl:sticky xl:top-[112px]`}>
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-2xl mb-4">
+          {!isFocusMode && (
+          <aside ref={infoPanelRef} className={`${iosCard} rounded-[26px] p-4 sm:p-5 h-fit xl:sticky xl:top-[112px]`}>
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-50 rounded-2xl mb-4 border border-slate-200/70">
               {[
                 { id: 'anamneses', label: 'Anamnese' },
                 { id: 'dados', label: 'Dados pessoais' },
@@ -879,10 +1172,10 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setInfoTab(tab.id as InfoTab)}
-                    className={`px-3 py-2 rounded-xl text-xs font-bold transition-all duration-200 ${
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 ${
                     infoTab === tab.id
-                      ? 'bg-white text-slate-950 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50 hover:scale-[1.01]'
+                      ? 'bg-white text-slate-950 shadow-[0_4px_14px_rgba(15,23,42,0.05)]'
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-white/70 hover:scale-[1.01]'
                   }`}
                 >
                   {tab.label}
@@ -892,15 +1185,15 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
             {infoTab === 'anamneses' && (
               <div className="space-y-3 text-sm">
-                <div className={`p-3 rounded-xl ${iosSubtleCard}`}>
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold mb-1">Histórico médico</p>
                   <p className="text-slate-700">{patient?.anamnesis?.medical_history || 'Não informado'}</p>
                 </div>
-                <div className={`p-3 rounded-xl ${iosSubtleCard}`}>
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold mb-1">Alergias</p>
                   <p className="text-slate-700">{patient?.anamnesis?.allergies || 'Não informado'}</p>
                 </div>
-                <div className={`p-3 rounded-xl ${iosSubtleCard}`}>
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold mb-1">Medicações</p>
                   <p className="text-slate-700">{patient?.anamnesis?.medications || 'Não informado'}</p>
                 </div>
@@ -909,15 +1202,37 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
 
             {infoTab === 'dados' && (
               <div className="space-y-3 text-sm text-slate-700">
-                <div className={`p-3 rounded-xl flex items-center gap-2 ${iosSubtleCard}`}><UserRound size={14} /> CPF: {patient?.cpf || 'Não informado'}</div>
-                <div className={`p-3 rounded-xl flex items-center gap-2 ${iosSubtleCard}`}><Phone size={14} /> {patient?.phone || 'Não informado'}</div>
-                <div className={`p-3 rounded-xl flex items-center gap-2 ${iosSubtleCard}`}><Info size={14} /> {patient?.email || 'Não informado'}</div>
-                <div className={`p-3 rounded-xl flex items-center gap-2 ${iosSubtleCard}`}><Calendar size={14} /> Nascimento: {patient?.birth_date ? formatDate(patient.birth_date) : 'Não informado'}</div>
+                <div className={`p-3.5 rounded-[20px] flex items-center gap-2 ${iosSubtleCard}`}><UserRound size={14} /> CPF: {patient?.cpf || 'Não informado'}</div>
+                <div className={`p-3.5 rounded-[20px] flex items-center gap-2 ${iosSubtleCard}`}><Phone size={14} /> {patient?.phone || 'Não informado'}</div>
+                <div className={`p-3.5 rounded-[20px] flex items-center gap-2 ${iosSubtleCard}`}><Info size={14} /> {patient?.email || 'Não informado'}</div>
+                <div className={`p-3.5 rounded-[20px] flex items-center gap-2 ${iosSubtleCard}`}><Calendar size={14} /> Nascimento: {patient?.birth_date ? formatDate(patient.birth_date) : 'Não informado'}</div>
               </div>
             )}
 
             {infoTab === 'imagens' && (
               <div className="space-y-3">
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-600">Anexos clínicos</p>
+                    <button
+                      type="button"
+                      onClick={() => clinicalImageInputRef.current?.click()}
+                      disabled={isUploadingClinicalImage}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      <Camera size={13} />
+                      {isUploadingClinicalImage ? 'Enviando...' : 'Upload RX/Imagem'}
+                    </button>
+                  </div>
+                  <input
+                    ref={clinicalImageInputRef}
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={handleClinicalImageUpload}
+                    className="hidden"
+                  />
+                </div>
+
                 {patientFiles.length > 0 ? (
                   patientFiles.slice(0, 6).map((file: any) => (
                     <a
@@ -925,29 +1240,33 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                       href={file.file_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`block p-3 rounded-xl transition-all duration-200 hover:bg-slate-100 hover:scale-[1.01] ${iosSubtleCard}`}
+                      className={`block p-3.5 rounded-[20px] transition-all duration-200 hover:bg-slate-100 hover:scale-[1.01] ${iosSubtleCard}`}
                     >
                       <p className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Camera size={14} /> {file.description || 'Arquivo clínico'}</p>
                       <p className="text-xs text-slate-500 mt-1">{file.created_at ? formatDate(file.created_at) : 'Data n/i'}</p>
                     </a>
                   ))
                 ) : (
-                  <div className={`p-8 rounded-xl text-center text-sm text-slate-600 ${iosSubtleCard}`}>Nenhuma imagem/RX anexada</div>
+                  <div className={`p-8 rounded-[20px] text-center text-sm text-slate-600 ${iosSubtleCard}`}>Nenhuma imagem/RX anexada</div>
+                )}
+
+                {uploadFeedback && (
+                  <p className="text-xs text-slate-500 px-1">{uploadFeedback}</p>
                 )}
               </div>
             )}
 
             {infoTab === 'financeiro' && (
               <div className="space-y-3">
-                <div className={`p-3 rounded-xl ${iosSubtleCard}`}>
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Orçado</p>
-                  <p className="text-lg font-extrabold text-slate-950 mt-1">
+                  <p className="text-lg font-semibold text-slate-950 mt-1">
                     {financialTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </p>
                 </div>
-                <div className={`p-3 rounded-xl ${iosSubtleCard}`}>
+                <div className={`p-3.5 rounded-[20px] ${iosSubtleCard}`}>
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Concluído</p>
-                  <p className="text-lg font-extrabold text-primary mt-1">
+                  <p className="text-lg font-semibold text-slate-950 mt-1">
                     {completedTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </p>
                 </div>
@@ -956,13 +1275,14 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                     setAppActiveTab('financeiro');
                     appNavigate('/financeiro');
                   }}
-                  className="w-full mt-2 px-4 py-2.5 rounded-xl bg-slate-950 text-white text-sm font-bold hover:bg-slate-900 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98] flex items-center justify-center gap-2"
+                  className="w-full mt-2 px-4 py-2.5 rounded-xl bg-slate-950 text-white text-sm font-semibold hover:bg-slate-900 hover:scale-[1.01] transition-all duration-200 active:scale-[0.98] flex items-center justify-center gap-2"
                 >
                   <CreditCard size={15} /> Abrir financeiro
                 </button>
               </div>
             )}
           </aside>
+          )}
         </div>
       </main>
 

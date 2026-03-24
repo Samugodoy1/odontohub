@@ -56,6 +56,11 @@ import {
   deleteDocument 
 } from '../server/controllers/documentController.js';
 import { generateDocumentPDF } from '../server/controllers/pdfController.js';
+import {
+  getPatientsIntelligence,
+  getDashboardData,
+  getSchedulingSuggestionsEndpoint
+} from '../server/controllers/intelligenceController.js';
 import { authenticate, requireAdmin } from '../server/utils/auth.js';
 import { query } from '../server/utils/db.js';
 
@@ -148,6 +153,11 @@ app.get(['/documents/:id', '/api/documents/:id'], getDocumentById);
 app.get(['/documents/:id/pdf', '/api/documents/:id/pdf'], generateDocumentPDF);
 app.post(['/documents', '/api/documents'], createDocument);
 app.delete(['/documents/:id', '/api/documents/:id'], deleteDocument);
+
+// Intelligence
+app.get(['/intelligence/patients', '/api/intelligence/patients'], getPatientsIntelligence);
+app.get(['/intelligence/dashboard', '/api/intelligence/dashboard'], getDashboardData);
+app.get(['/intelligence/scheduling', '/api/intelligence/scheduling'], getSchedulingSuggestionsEndpoint);
 
 // Admin
 app.get(['/admin/users', '/api/admin/users'], requireAdmin, getUsers);
