@@ -45,7 +45,8 @@ import {
 } from '../server/controllers/adminController.js';
 import { 
   getProfile, 
-  updateProfile 
+  updateProfile,
+  updateOnboarding
 } from '../server/controllers/profileController.js';
 import { uploadPatientFile, uploadProfilePhoto, uploadPatientPhoto } from '../server/controllers/uploadController.js';
 import { deleteFile } from '../server/controllers/fileController.js';
@@ -138,6 +139,7 @@ app.delete(['/dentists/:id', '/api/dentists/:id'], deleteDentist);
 // Profile
 app.get(['/profile', '/api/profile'], getProfile);
 app.post(['/profile', '/api/profile'], updateProfile);
+app.patch(['/profile/onboarding', '/api/profile/onboarding'], updateOnboarding);
 app.post(['/profile/photo', '/api/profile/photo'], upload.single('file'), uploadProfilePhoto);
 
 // Files

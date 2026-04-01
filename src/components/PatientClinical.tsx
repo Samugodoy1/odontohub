@@ -19,7 +19,7 @@ import {
   UserRound,
   WalletCards,
   Zap,
-} from 'lucide-react';
+} from '../icons';
 import { AnimatePresence, motion } from 'motion/react';
 import { NovaEvolucao } from './NovaEvolucao';
 import { Odontogram } from './Odontogram';

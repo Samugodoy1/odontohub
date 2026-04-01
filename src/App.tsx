@@ -21,7 +21,7 @@ import {
   AlertTriangle,
   LogOut,
   Settings,
-  Image as ImageIcon,
+  ImageIcon,
   Bell,
   Lock,
   Trash2,
@@ -44,7 +44,7 @@ import {
   Pencil,
   Mail,
   Download
-} from 'lucide-react';
+} from './icons';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Odontogram } from './components/Odontogram';
 import { Documents } from './components/Documents';
@@ -478,7 +478,7 @@ export default function App() {
   const [financialSummary, setFinancialSummary] = useState<any>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<{ id: number; name: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ id: number; name: string; role: string; onboarding_done?: boolean; welcome_seen?: boolean } | null>(null);
   const [loginData, setLoginData] = useState({ email: '', password: '', rememberMe: false });
   const [registerData, setRegisterData] = useState({ 
     name: '', 
@@ -1079,6 +1079,24 @@ export default function App() {
     localStorage.removeItem('user');
     setActiveTab('dashboard');
     setLoading(true);
+  };
+
+  const updateUserOnboarding = async (field: 'onboarding_done' | 'welcome_seen') => {
+    const token = localStorage.getItem('token');
+    try {
+      await fetch('/api/profile/onboarding', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ [field]: true })
+      });
+    } catch (e) {
+      console.error('Failed to update onboarding state', e);
+    }
+    if (user) {
+      const updated = { ...user, [field]: true };
+      setUser(updated);
+      localStorage.setItem('user', JSON.stringify(updated));
+    }
   };
 
   // Dashboard Stats Calculations
@@ -2562,6 +2580,8 @@ export default function App() {
                 sendReminder={sendReminder}
                 onReschedule={openRescheduleAppointment}
                 onSchedulePatient={openScheduleSuggestion}
+                onDismissOnboarding={() => updateUserOnboarding('onboarding_done')}
+                onDismissWelcome={() => updateUserOnboarding('welcome_seen')}
               />
             )}
 

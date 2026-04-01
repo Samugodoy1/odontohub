@@ -21,7 +21,7 @@ import {
   UserRound,
   WalletCards,
   X,
-} from 'lucide-react';
+} from '../icons';
 
 interface Transaction {
   id: number;
