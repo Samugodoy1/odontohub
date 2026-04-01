@@ -2733,7 +2733,7 @@ export default function App() {
                             </div>
                             <div className="space-y-2">
                               <p className="text-lg font-bold text-slate-800">Nenhum agendamento neste dia</p>
-                              <p className="text-sm text-slate-500">Clique no bot\u00e3o abaixo para agendar uma consulta r\u00e1pida. Voc\u00ea escolhe o paciente, data e hor\u00e1rio.</p>
+                              <p className="text-sm text-slate-500">Sua agenda está livre. Que tal encaixar um paciente?</p>
                             </div>
                             <button 
                               onClick={openAppointmentModal}
@@ -3035,7 +3035,7 @@ export default function App() {
                                       <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
                                         <CalendarDays size={24} className="text-slate-300" />
                                       </div>
-                                      <p className="text-sm text-slate-400 font-medium">Nenhum agendamento neste dia</p>
+                                      <p className="text-sm text-slate-400 font-medium">Agenda livre neste dia</p>
                                       {bestSlot && (
                                         <button
                                           type="button"
@@ -4193,21 +4193,30 @@ export default function App() {
                   const totalAtRisk = patientIntelligence.filter((pi: any) => pi.status === 'ABANDONO' || pi.status === 'ATENCAO').length;
                   const totalNoAppointment = patientIntelligence.filter((pi: any) => !pi.has_future_appointment && pi.status !== 'FINALIZADO').length;
                   const totalLeads = allMetas.filter(x => x.meta.isLead).length;
+                  const totalInTreatment = allMetas.filter(x => {
+                    const intel = intelMap.get(x.patient.id);
+                    return intel?.status === 'EM_TRATAMENTO' || x.meta.clinicalStatus === 'Em tratamento';
+                  }).length;
 
                   const filterChips = [
-                    { key: 'all', label: 'Todos', count: 0 },
-                    { key: 'leads', label: 'Leads', count: totalLeads },
-                    { key: 'action-needed', label: 'Preciso agir', count: totalActionNeeded },
-                    { key: 'at-risk', label: 'Em risco', count: totalAtRisk },
-                    { key: 'no-appointment', label: 'Sem agendamento', count: totalNoAppointment },
-                    { key: 'in-treatment', label: 'Em tratamento', count: 0 },
-                    { key: 'overdue', label: 'Atrasados', count: totalOverdue }
-                  ] as const;
+                    { key: 'all',            label: 'Todos',             count: null },
+                    { key: 'leads',          label: 'Leads',             count: totalLeads },
+                    { key: 'action-needed',  label: 'Preciso agir',      count: totalActionNeeded },
+                    { key: 'at-risk',        label: 'Em risco',          count: totalAtRisk },
+                    { key: 'no-appointment', label: 'Sem agendamento',   count: totalNoAppointment },
+                    { key: 'in-treatment',   label: 'Em tratamento',     count: totalInTreatment },
+                    { key: 'overdue',        label: 'Atrasados',         count: totalOverdue },
+                  ].filter(chip => chip.count === null || chip.count > 0) as { key: string; label: string; count: number | null }[];
 
                   const handleScheduleFromCard = (patient: Patient) => {
                     setPatientActionsToday(prev => new Set([...prev, patient.id]));
                     openPatientAppointmentModal(patient);
                   };
+
+                  // Reset active filter if its chip was hidden (count dropped to 0)
+                  if (patientListFilter !== 'all' && !filterChips.some(c => c.key === patientListFilter)) {
+                    setPatientListFilter('all');
+                  }
 
                   const handleSummaryOverdueClick = () => {
                     setPatientListFilter('overdue');
@@ -4339,7 +4348,7 @@ export default function App() {
                             }`}
                           >
                             {chip.label}
-                            {chip.count > 0 && (
+                            {chip.count !== null && chip.count > 0 && (
                               <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold ${
                                 chip.key === 'action-needed' || chip.key === 'overdue'
                                   ? 'bg-rose-100 text-rose-600'
