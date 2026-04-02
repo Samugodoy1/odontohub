@@ -168,6 +168,7 @@ const procedureActions = [
   { key: 'root-canal', label: 'Canal', status: 'root_canal_needed' as ToothStatus, category: 'procedure' as const },
   { key: 'extraction', label: 'Extracao', status: 'extraction_needed' as ToothStatus, category: 'procedure' as const },
   { key: 'crown', label: 'Coroa', status: 'crown' as ToothStatus, category: 'procedure' as const },
+  { key: 'implant', label: 'Implante', status: 'implant' as ToothStatus, category: 'procedure' as const },
 ];
 
 const continuationActions = [
@@ -175,6 +176,7 @@ const continuationActions = [
   { key: 'continue-canal', label: 'Canal', status: 'root_canal_done' as ToothStatus, category: 'procedure' as const },
   { key: 'extraction', label: 'Extracao', status: 'extraction_done' as ToothStatus, category: 'procedure' as const },
   { key: 'crown', label: 'Coroa', status: 'crown' as ToothStatus, category: 'procedure' as const },
+  { key: 'implant', label: 'Implante', status: 'implant' as ToothStatus, category: 'procedure' as const },
 ];
 
 const resolveHistoryTag = (procedure?: string, notes?: string) => {
