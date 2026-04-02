@@ -11,6 +11,7 @@ import {
   addEvolution, 
   updateOdontogram, 
   addToothHistory, 
+  deleteToothHistory,
   addPatientFile,
   getPatientFinancialHistory,
   updatePatient
@@ -109,6 +110,7 @@ app.put(['/patients/:id/anamnesis', '/api/patients/:id/anamnesis'], updateAnamne
 app.post(['/patients/:id/evolution', '/api/patients/:id/evolution'], addEvolution);
 app.post(['/patients/:id/odontogram', '/api/patients/:id/odontogram'], updateOdontogram);
 app.post(['/patients/:id/tooth-history', '/api/patients/:id/tooth-history'], addToothHistory);
+app.delete(['/patients/:id/tooth-history/:toothNumber', '/api/patients/:id/tooth-history/:toothNumber'], deleteToothHistory);
 app.post(['/patients/:id/files', '/api/patients/:id/files'], upload.single('file'), uploadPatientFile);
 app.post(['/patients/:id/photo', '/api/patients/:id/photo'], upload.single('file'), uploadPatientPhoto);
 app.get(['/patients/:id/financial', '/api/patients/:id/financial'], getPatientFinancialHistory);

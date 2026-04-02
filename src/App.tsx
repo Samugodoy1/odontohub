@@ -3928,6 +3928,9 @@ export default function App() {
                                       <button
                                         onClick={() => {
                                           const slots = findAvailableSlots(monthSheetSelectedDay!);
+                                          const dentist_id = user?.id ? user.id.toString() : (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}')?.id?.toString() : '');
+                                          setAppointmentModalMode('schedule');
+                                          setEditingAppointmentId(null);
                                           if (slots.length > 0) {
                                             const bestSlot = slots[0]; // Biggest slot
                                             setSuggestedSlot({
@@ -3937,16 +3940,19 @@ export default function App() {
                                             });
                                             setNewAppointment({
                                               patient_id: '',
-                                              dentist_id: user?.id ? user.id.toString() : '',
+                                              patient_name: '',
+                                              dentist_id: dentist_id || '',
                                               date: bestSlot.startTime.toISOString().split('T')[0],
                                               time: bestSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }).replace(':', ''),
                                               duration: Math.floor(bestSlot.duration).toString(),
                                               notes: bestSlot.procedure
                                             });
                                           } else {
+                                            setSuggestedSlot(null);
                                             setNewAppointment({
                                               patient_id: '',
-                                              dentist_id: user?.id ? user.id.toString() : '',
+                                              patient_name: '',
+                                              dentist_id: dentist_id || '',
                                               date: monthSheetSelectedDay!.toISOString().split('T')[0],
                                               time: '',
                                               duration: '30',
@@ -5304,7 +5310,7 @@ export default function App() {
               {suggestedSlot && (
                 <div className="mx-4 mt-3 p-2.5 bg-slate-50/50 backdrop-blur-sm border border-slate-200/50 rounded-[12px]">
                   <p className="text-xs text-slate-600 font-medium">
-                    <strong>{suggestedSlot.startTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</strong> • <strong>{Math.floor(suggestedSlot.duration)}min</strong> • {suggestedSlot.procedure}
+                    <strong>{suggestedSlot.date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</strong> • <strong>{Math.floor(suggestedSlot.duration)}min</strong> • {suggestedSlot.procedure}
                   </p>
                 </div>
               )}

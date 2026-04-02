@@ -6,14 +6,17 @@ import {
   ArrowUpRight,
   Calendar,
   Camera,
+  Check,
   CheckCircle2,
   Circle,
   Clock3,
   CreditCard,
   FileText,
   Info,
+  Lock,
   Loader2,
   Phone,
+  Shield,
   Trash2,
   User,
   UserRound,
@@ -189,6 +192,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   const [highlightedTimelineId, setHighlightedTimelineId] = useState<string | null>(null);
   const [highlightedToothNumber, setHighlightedToothNumber] = useState<number | null>(null);
   const [selectedTreatmentAction, setSelectedTreatmentAction] = useState<any | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingValues, setEditingValues] = useState<Record<string, string>>({});
   const [optimisticOdontogram, setOptimisticOdontogram] = useState<Record<number, any>>({});
   const [optimisticTreatments, setOptimisticTreatments] = useState<any[]>([]);
@@ -319,6 +323,132 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     }
   };
 
+  const togglePrepaymentAll = async () => {
+    const activeItems = mergedTreatmentPlan.filter((item: any) =>
+      ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase())
+    );
+    if (activeItems.length === 0) return;
+    const allActive = activeItems.every((item: any) => item.requires_prepayment);
+    const nextValue = !allActive;
+    const nowIso = new Date().toISOString();
+    const nextPlan = mergedTreatmentPlan.map((item: any) => {
+      const isActive = ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase());
+      if (!isActive) return item;
+      if (item.prepayment_confirmed) return item; // don't toggle already paid
+      return { ...item, requires_prepayment: nextValue, prepayment_confirmed: false, updated_at: nowIso };
+    });
+    setOptimisticTreatments((prev) => {
+      const ids = new Set(nextPlan.map((i: any) => i.id));
+      return [...prev.filter((i: any) => !ids.has(i.id)), ...nextPlan];
+    });
+    try {
+      await onUpdatePatient({ ...patient, treatmentPlan: nextPlan });
+    } catch (error) {
+      console.error('Error toggling prepayment:', error);
+    }
+  };
+
+  const confirmPrepayment = async (treatment: any) => {
+    const nowIso = new Date().toISOString();
+    const nextPlan = (mergedTreatmentPlan || []).map((item: any) =>
+      item.id === treatment.id
+        ? { ...item, prepayment_confirmed: true, prepayment_confirmed_at: nowIso, updated_at: nowIso }
+        : item
+    );
+    setOptimisticTreatments((prev) => {
+      const ids = new Set(nextPlan.map((i: any) => i.id));
+      return [...prev.filter((i: any) => !ids.has(i.id)), ...nextPlan];
+    });
+    try {
+      await onUpdatePatient({ ...patient, treatmentPlan: nextPlan });
+
+      // Registrar transação financeira automaticamente
+      const treatmentValue = Number(treatment.value) || 0;
+      if (treatmentValue > 0) {
+        const procedureLabel = treatment.procedure || 'Procedimento';
+        const toothLabel = treatment.tooth_number ? ` — dente ${treatment.tooth_number}` : '';
+        apiFetch('/api/finance', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'INCOME',
+            description: `Pagamento antecipado: ${procedureLabel}${toothLabel}`,
+            category: 'Procedimentos',
+            amount: treatmentValue,
+            payment_method: 'Indefinido',
+            date: nowIso.split('T')[0],
+            status: 'PAID',
+            patient_id: patient.id,
+            procedure: procedureLabel,
+            notes: 'Pagamento recebido antes da execução do procedimento.',
+          }),
+        }).catch((err) => {
+          console.error('Error creating prepayment transaction:', err);
+        });
+      }
+    } catch (error) {
+      console.error('Error confirming prepayment:', error);
+    }
+    setSelectedTreatmentAction(null);
+  };
+
+  const confirmPrepaymentAll = async (paymentMethod: string = 'Indefinido') => {
+    const nowIso = new Date().toISOString();
+    const unpaid = mergedTreatmentPlan.filter(
+      (item: any) =>
+        ['APROVADO', 'PENDENTE', 'PLANEJADO'].includes(String(item.status || '').toUpperCase()) &&
+        !(item.requires_prepayment && item.prepayment_confirmed)
+    );
+    if (unpaid.length === 0) return;
+
+    const totalAmount = unpaid.reduce((sum: number, item: any) => sum + (Number(item.value) || 0), 0);
+
+    const nextPlan = mergedTreatmentPlan.map((item: any) => {
+      const isTarget = unpaid.some((u: any) => u.id === item.id);
+      return isTarget
+        ? { ...item, requires_prepayment: true, prepayment_confirmed: true, prepayment_confirmed_at: nowIso, updated_at: nowIso }
+        : item;
+    });
+
+    setOptimisticTreatments((prev) => {
+      const ids = new Set(nextPlan.map((i: any) => i.id));
+      return [...prev.filter((i: any) => !ids.has(i.id)), ...nextPlan];
+    });
+
+    try {
+      await onUpdatePatient({ ...patient, treatmentPlan: nextPlan });
+
+      if (totalAmount > 0) {
+        const procedures = unpaid.map((i: any) => i.procedure || 'Procedimento').join(', ');
+        apiFetch('/api/finance', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'INCOME',
+            description: `Pagamento integral do orçamento`,
+            category: 'Procedimentos',
+            amount: totalAmount,
+            payment_method: paymentMethod,
+            date: nowIso.split('T')[0],
+            status: 'PAID',
+            patient_id: patient.id,
+            procedure: procedures,
+            notes: `Pagamento integral: ${unpaid.length} procedimento(s).`,
+          }),
+        }).then(() => {
+          if (infoTab === 'financeiro') {
+            apiFetch(`/api/patients/${patient.id}/financial`)
+              .then((r) => r.json())
+              .then((data) => setPatientFinancial(data))
+              .catch(() => {});
+          }
+        }).catch((err) => {
+          console.error('Error creating full budget payment transaction:', err);
+        });
+      }
+    } catch (error) {
+      console.error('Error confirming full budget prepayment:', error);
+    }
+  };
+
   const handleOdontogramStatusChange = (toothNumber: number, toothData: any) => {
     setOptimisticOdontogram((prev) => ({ ...prev, [toothNumber]: toothData }));
 
@@ -397,6 +527,12 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       !!existingTreatment &&
       ['root_canal_done', 'extraction_done'].includes(String(status || '').toLowerCase());
 
+    // Block completion via odontogram if prepayment is required but not confirmed
+    if (isCompletionAction && existingTreatment?.requires_prepayment && !existingTreatment?.prepayment_confirmed) {
+      setSelectedTreatmentAction(existingTreatment);
+      return;
+    }
+
     const nextTreatmentPlan = category === 'procedure'
       ? mode === 'continuity' && existingTreatment
         ? (patient.treatmentPlan || []).map((item: any) =>
@@ -414,6 +550,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
               procedure,
               value: values[procedure] || 0,
               status: 'PLANEJADO',
+              requires_prepayment: true,
               created_at: nowIso,
             },
           ]
@@ -434,6 +571,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
             procedure,
             value: values[procedure] || 0,
             status: 'PLANEJADO',
+            requires_prepayment: true,
             created_at: nowIso,
           }
       : null;
@@ -508,7 +646,8 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
       // Criar transação financeira automaticamente ao concluir via odontograma
       if (isCompletionAction && existingTreatment) {
         const treatmentValue = Number(existingTreatment.value) || 0;
-        if (treatmentValue > 0) {
+        const alreadyPaidViaPrePayment = existingTreatment.requires_prepayment && existingTreatment.prepayment_confirmed;
+        if (treatmentValue > 0 && !alreadyPaidViaPrePayment) {
           const procedureLabel = existingTreatment.procedure || procedure || 'Procedimento';
           apiFetch('/api/finance', {
             method: 'POST',
@@ -592,9 +731,10 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     try {
       await onUpdatePatient(updatedPatient);
 
-      // Criar transação financeira automaticamente
+      // Criar transação financeira automaticamente (pular se pagamento antecipado já confirmado)
       const treatmentValue = Number(treatment.value) || 0;
-      if (treatmentValue > 0) {
+      const alreadyPaidViaPrePayment = treatment.requires_prepayment && treatment.prepayment_confirmed;
+      if (treatmentValue > 0 && !alreadyPaidViaPrePayment) {
         const procedureLabel = treatment.procedure || 'Procedimento';
         const toothLabel = treatment.tooth_number ? ` — dente ${treatment.tooth_number}` : '';
         apiFetch('/api/finance', {
@@ -741,9 +881,35 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
     }
   };
 
+  const handleResetTooth = async (toothNumber: number) => {
+    // Remove tooth from odontogram data
+    const currentOdontogram = { ...(patient?.odontogram || {}) };
+    delete currentOdontogram[toothNumber];
+    setOptimisticOdontogram((prev) => {
+      const next = { ...prev };
+      delete next[toothNumber];
+      return next;
+    });
+
+    try {
+      // Update odontogram without the tooth
+      await apiFetch(`/api/patients/${patient.id}/odontogram`, {
+        method: 'POST',
+        body: JSON.stringify({ data: currentOdontogram }),
+      });
+
+      // Delete tooth history entries
+      await apiFetch(`/api/patients/${patient.id}/tooth-history/${toothNumber}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Error resetting tooth:', error);
+    }
+  };
+
   const patientFiles = patient?.files || [];
-  const financialTotal = (patient?.treatmentPlan || []).reduce((acc: number, item: any) => acc + (Number(item.value) || 0), 0);
-  const completedTotal = (patient?.treatmentPlan || [])
+  const financialTotal = mergedTreatmentPlan.reduce((acc: number, item: any) => acc + (Number(item.value) || 0), 0);
+  const completedTotal = mergedTreatmentPlan
     .filter((item: any) => String(item.status || '').toUpperCase() === 'REALIZADO')
     .reduce((acc: number, item: any) => acc + (Number(item.value) || 0), 0);
 
@@ -1031,6 +1197,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
               history={patient?.toothHistory || []}
               onChange={handleOdontogramStatusChange}
               onAddHistory={handleAddToothHistory}
+              onResetTooth={handleResetTooth}
               onSelectProcedure={handleOdontoProcedureSelect}
               treatments={mergedTreatmentPlan}
               activeToothNumbers={activeToothNumbers}
@@ -1048,7 +1215,34 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                   <h3 className="text-lg sm:text-xl font-semibold tracking-[-0.02em] text-slate-950">Tratamento atual</h3>
                   <p className="text-xs text-slate-500 mt-0.5">Próximo passo clínico do paciente</p>
                 </div>
-                <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-[0.12em]">Foco</span>
+                {treatmentInProgress.length > 0 && (() => {
+                  const activeUnpaid = treatmentInProgress.filter((item: any) => !item.prepayment_confirmed);
+                  const allActive = activeUnpaid.length > 0 && activeUnpaid.every((item: any) => item.requires_prepayment);
+                  const allPaid = treatmentInProgress.every((item: any) => item.requires_prepayment && item.prepayment_confirmed);
+                  return (
+                    <button
+                      type="button"
+                      onClick={togglePrepaymentAll}
+                      disabled={allPaid}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-all duration-200 ${
+                        allPaid
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                          : allActive
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+                            : 'bg-slate-50 text-slate-400 border border-slate-200 hover:text-slate-600 hover:border-slate-300'
+                      }`}
+                      title={allPaid ? 'Todos pagos' : allActive ? 'Cobrar antes de executar (ativo)' : 'Ativar cobrança antecipada'}
+                    >
+                      {allPaid ? (
+                        <><Check size={11} /> Todos pagos</>
+                      ) : allActive ? (
+                        <><Lock size={11} /> Cobrar antes</>
+                      ) : (
+                        <><Shield size={11} /> Cobrar antes</>
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
 
               <div className="space-y-3">
@@ -1056,6 +1250,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                   treatmentInProgress.map((item: any, idx: number) => {
                     const isPriority = idx === 0;
                     const rawStatus = String(item.status || '').toUpperCase();
+                    const isPrepaid = item.requires_prepayment && item.prepayment_confirmed;
                     const itemBadge =
                       rawStatus === 'APROVADO'
                         ? 'bg-slate-100 text-slate-700 border border-slate-200'
@@ -1067,9 +1262,11 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                       <div
                         key={item.id}
                         className={`rounded-2xl px-4 py-4 flex flex-col items-stretch gap-3 transition-all duration-300 sm:flex-row sm:items-center sm:justify-between ${
-                          isPriority
-                            ? 'border border-slate-200 bg-slate-50/60 shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
-                            : `${iosSubtleCard} hover:border-slate-300`
+                          isPrepaid
+                            ? 'border border-emerald-200 bg-emerald-50/30 shadow-[0_6px_18px_rgba(16,185,129,0.06)]'
+                            : isPriority
+                              ? 'border border-slate-200 bg-slate-50/60 shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
+                              : `${iosSubtleCard} hover:border-slate-300`
                         } ${
                           highlightedTreatmentId === item.id
                             ? 'ring-2 ring-slate-300 bg-slate-50 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
@@ -1092,6 +1289,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                               <input
                                 type="text"
                                 inputMode="decimal"
+                                disabled={isPrepaid}
                                 value={editingValues[item.id] ?? formatCurrencyInputBRL(String((Number(item.value) || 0) * 100))}
                                 onChange={(event) => {
                                   const next = formatCurrencyInputBRL(event.target.value);
@@ -1108,10 +1306,24 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                                     (event.currentTarget as HTMLInputElement).blur();
                                   }
                                 }}
-                                className="w-full sm:w-24 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-base font-medium text-slate-700 outline-none focus:border-slate-400 min-h-[40px]"
+                                className={`w-full sm:w-24 rounded-md border px-2.5 py-2 text-base font-medium outline-none min-h-[40px] ${
+                                  isPrepaid
+                                    ? 'border-emerald-200 bg-emerald-50/40 text-emerald-700 cursor-default'
+                                    : 'border-slate-200 bg-white text-slate-700 focus:border-slate-400'
+                                }`}
                                 aria-label="Valor do procedimento"
                               />
                             </label>
+                            {isPrepaid && (
+                              <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <Check size={10} /> Pago
+                              </span>
+                            )}
+                            {item.requires_prepayment && !item.prepayment_confirmed && (
+                              <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200">
+                                <Lock size={10} /> Aguardando
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1145,6 +1357,41 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* Pagar orçamento completo */}
+                {(() => {
+                  const unpaid = treatmentInProgress.filter(
+                    (item: any) => !(item.requires_prepayment && item.prepayment_confirmed)
+                  );
+                  const allPaid = treatmentInProgress.length > 0 && unpaid.length === 0;
+                  const unpaidTotal = unpaid.reduce((s: number, i: any) => s + (Number(i.value) || 0), 0);
+                  if (treatmentInProgress.length < 2 && !allPaid) return null;
+                  return allPaid ? (
+                    <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/40 px-4 py-3">
+                      <Check size={14} className="text-emerald-600 shrink-0" />
+                      <p className="text-[13px] font-semibold text-emerald-700">Orçamento completo pago</p>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentModal(true)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3.5 flex items-center justify-between gap-3 transition-all duration-200 hover:border-slate-300 hover:shadow-sm active:scale-[0.99]"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+                          <CreditCard size={14} className="text-slate-600" />
+                        </div>
+                        <div className="text-left min-w-0">
+                          <p className="text-[13px] font-bold text-slate-800">Pagar orçamento completo</p>
+                          <p className="text-[11px] text-slate-500">{unpaid.length} procedimento{unpaid.length !== 1 ? 's' : ''} pendente{unpaid.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      </div>
+                      <span className="text-[14px] font-bold text-slate-900 shrink-0">
+                        {unpaidTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </span>
+                    </button>
+                  );
+                })()}
               </div>
             </section>
 
@@ -1497,13 +1744,43 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
             </div>
 
             <div className="space-y-3">
-              <button
-                onClick={() => handleCompleteTreatment(selectedTreatmentAction)}
-                className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left transition-colors hover:bg-emerald-100"
-              >
-                <p className="text-sm font-bold text-emerald-900">Concluir procedimento atual</p>
-                <p className="text-xs text-emerald-700">Move para execução concluída e registra na evolução clínica.</p>
-              </button>
+              {selectedTreatmentAction.requires_prepayment && !selectedTreatmentAction.prepayment_confirmed ? (
+                <>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Lock size={14} className="text-amber-600" />
+                      <p className="text-sm font-bold text-amber-800">Pagamento antecipado exigido</p>
+                    </div>
+                    <p className="text-xs text-amber-700">
+                      Este procedimento exige pagamento antes da execução.
+                      {Number(selectedTreatmentAction.value) > 0 && (
+                        <> Valor: <strong>R$ {Number(selectedTreatmentAction.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => confirmPrepayment(selectedTreatmentAction)}
+                    className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-left transition-colors hover:bg-emerald-100"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Check size={14} className="text-emerald-700" />
+                      <p className="text-sm font-bold text-emerald-900">Confirmar pagamento recebido</p>
+                    </div>
+                    <p className="text-xs text-emerald-700 mt-0.5">Registra o recebimento e libera o procedimento para conclusão.</p>
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => handleCompleteTreatment(selectedTreatmentAction)}
+                  className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left transition-colors hover:bg-emerald-100"
+                >
+                  <p className="text-sm font-bold text-emerald-900">Concluir procedimento atual</p>
+                  <p className="text-xs text-emerald-700">Move para execução concluída e registra na evolução clínica.</p>
+                  {selectedTreatmentAction.requires_prepayment && selectedTreatmentAction.prepayment_confirmed && (
+                    <p className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1"><Check size={10} /> Pagamento já confirmado</p>
+                  )}
+                </button>
+              )}
 
               <div className="rounded-xl border border-slate-200 p-3">
                 <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Converter para outro procedimento</p>
@@ -1534,6 +1811,69 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
           </div>
         </div>
       )}
+
+      {showPaymentModal && (() => {
+        const unpaid = treatmentInProgress.filter(
+          (item: any) => !(item.requires_prepayment && item.prepayment_confirmed)
+        );
+        const unpaidTotal = unpaid.reduce((s: number, i: any) => s + (Number(i.value) || 0), 0);
+        const methods = [
+          { key: 'Dinheiro', label: 'Dinheiro', icon: '💵' },
+          { key: 'Pix', label: 'Pix', icon: '⚡' },
+          { key: 'Cartão Crédito', label: 'Cartão Crédito', icon: '💳' },
+          { key: 'Cartão Débito', label: 'Cartão Débito', icon: '💳' },
+          { key: 'Transferência', label: 'Transferência', icon: '🏦' },
+        ];
+        return (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/30 p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_28px_70px_rgba(15,23,42,0.20)]"
+            >
+              <div className="mb-5">
+                <h3 className="text-lg font-bold text-slate-900">Pagar orçamento completo</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  {unpaid.length} procedimento{unpaid.length !== 1 ? 's' : ''} &middot;{' '}
+                  <span className="font-bold text-slate-800">
+                    {unpaidTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                </p>
+              </div>
+
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Forma de pagamento</p>
+              <div className="space-y-2">
+                {methods.map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={async () => {
+                      setShowPaymentModal(false);
+                      await confirmPrepaymentAll(m.key);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3.5 flex items-center gap-3 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm active:scale-[0.98]"
+                  >
+                    <span className="text-lg">{m.icon}</span>
+                    <span className="text-sm font-semibold text-slate-800">{m.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
 
     </div>
   );

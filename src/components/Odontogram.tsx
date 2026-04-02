@@ -37,6 +37,7 @@ interface OdontogramProps {
   history?: ToothRecord[];
   onChange?: (toothNumber: number, toothData: ToothData) => void;
   onAddHistory?: (record: Omit<ToothRecord, 'id'>) => Promise<void>;
+  onResetTooth?: (toothNumber: number) => Promise<void>;
   onSelectProcedure?: (payload: {
     toothNumber: number;
     procedure: string;
@@ -279,6 +280,7 @@ interface ActionMenuProps {
   anchorRect: DOMRect | null;
   onClose: () => void;
   onAction: (action: { label: string; status: ToothStatus; category: 'diagnosis' | 'procedure'; mode: 'initial' | 'continuity' }) => void;
+  onReset?: () => void;
 }
 
 const ActionMenu: React.FC<ActionMenuProps> = ({
@@ -292,6 +294,7 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
   anchorRect,
   onClose,
   onAction,
+  onReset,
 }) => {
   const menuRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -363,6 +366,16 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
             ))}
           </div>
 
+          {onReset && selectedStatus !== 'healthy' && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="mt-2 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-600 transition-all duration-200 hover:bg-rose-100 hover:border-rose-300"
+            >
+              Remover registro
+            </button>
+          )}
+
           <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Histórico do dente</p>
             {recentHistory.length > 0 ? (
@@ -427,6 +440,16 @@ const ActionMenu: React.FC<ActionMenuProps> = ({
           ))}
         </div>
 
+        {onReset && selectedStatus !== 'healthy' && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="mt-1.5 w-full rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-semibold text-rose-600 transition-all duration-200 hover:bg-rose-100 hover:border-rose-300"
+          >
+            Remover registro
+          </button>
+        )}
+
         <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2">
           <p className="px-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Histórico</p>
           {recentHistory.length > 0 ? (
@@ -465,6 +488,7 @@ export const Odontogram: React.FC<OdontogramProps> = ({
   history = [], 
   onChange, 
   onAddHistory,
+  onResetTooth,
   onSelectProcedure,
   treatments = [],
   activeToothNumbers = [],
@@ -651,6 +675,23 @@ export const Odontogram: React.FC<OdontogramProps> = ({
     }
   };
 
+  const handleResetTooth = () => {
+    if (selectedTooth === null) return;
+    setIsMenuOpen(false);
+
+    if (onChange) {
+      onChange(selectedTooth, { status: 'healthy', notes: '' });
+    }
+
+    setOptimisticHistory((prev) => prev.filter((r) => r.tooth_number !== selectedTooth));
+
+    if (onResetTooth) {
+      onResetTooth(selectedTooth).catch((error) => {
+        console.error('Error resetting tooth:', error);
+      });
+    }
+  };
+
   const renderTooth = (num: number) => {
     const toothStatus = getToothStatus(num);
     const flags = deriveToothFlags(num);
@@ -800,6 +841,7 @@ export const Odontogram: React.FC<OdontogramProps> = ({
         anchorRect={anchorRect}
         onClose={() => setIsMenuOpen(false)}
         onAction={handleAction}
+        onReset={onResetTooth ? handleResetTooth : undefined}
       />
 
       {!isMobile && hoveredTooth !== null && hoverRect && (
