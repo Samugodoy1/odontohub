@@ -2151,7 +2151,7 @@ export default function App() {
                 <SidebarItem id="configuracoes" icon={Settings} label="Configurações" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
               </nav>
             </aside>
-            <main className="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <main className="flex-1 min-w-0 overflow-x-hidden flex flex-col pt-4 md:pt-6 lg:pt-8">
               <ClinicalPageRoute 
                 transactions={transactions}
                 appointments={appointments}
