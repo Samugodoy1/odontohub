@@ -230,11 +230,11 @@ export const getPortalData = async (req: Request, res: Response) => {
   try {
     const portal = (req as any).portal;
 
-    const [patientRes, appointmentsRes, filesRes, evolutionRes, plansRes, consentsRes, anamnesisRes] = await Promise.all([
+    const [patientRes, appointmentsRes, filesRes, evolutionRes, plansRes, consentsRes, anamnesisRes, transactionsRes, installmentsRes] = await Promise.all([
       query(
         `SELECT id, name, email, phone, cpf, birth_date, photo_url, address,
                 consent_accepted, consent_date, emergency_contact_name, emergency_contact_phone,
-                health_insurance, health_insurance_number
+                health_insurance, health_insurance_number, treatment_plan
          FROM patients WHERE id = $1 AND dentist_id = $2`,
         [portal.patient_id, portal.dentist_id]
       ),
@@ -270,10 +270,10 @@ export const getPortalData = async (req: Request, res: Response) => {
                 ) ORDER BY i.number) as installments
          FROM payment_plans pp
          LEFT JOIN installments i ON i.payment_plan_id = pp.id
-         WHERE pp.patient_id = $1
+         WHERE pp.patient_id = $1 AND pp.dentist_id = $2
          GROUP BY pp.id
          ORDER BY pp.created_at DESC`,
-        [portal.patient_id]
+        [portal.patient_id, portal.dentist_id]
       ),
       query(
         `SELECT consent_type, signed_at FROM patient_consent_signatures
@@ -284,7 +284,21 @@ export const getPortalData = async (req: Request, res: Response) => {
         `SELECT medical_history, allergies, medications, chief_complaint, habits, family_history
          FROM anamnesis WHERE patient_id = $1`,
         [portal.patient_id]
-      )
+      ),
+      query(
+        `SELECT * FROM transactions
+         WHERE patient_id = $1 AND dentist_id = $2
+         ORDER BY date DESC`,
+        [portal.patient_id, portal.dentist_id]
+      ).catch(() => ({ rows: [] })),
+      query(
+        `SELECT i.*, p.procedure
+         FROM installments i
+         JOIN payment_plans p ON i.payment_plan_id = p.id
+         WHERE i.patient_id = $1 AND i.dentist_id = $2
+         ORDER BY i.due_date ASC`,
+        [portal.patient_id, portal.dentist_id]
+      ).catch(() => ({ rows: [] }))
     ]);
 
     if (patientRes.rows.length === 0) {
@@ -304,6 +318,8 @@ export const getPortalData = async (req: Request, res: Response) => {
       files: filesRes.rows,
       evolution: evolutionRes.rows,
       payment_plans: plansRes.rows,
+      transactions: transactionsRes.rows,
+      installments: installmentsRes.rows,
       consents: consentsRes.rows,
       clinic: clinicRes.rows[0] || null
     });
