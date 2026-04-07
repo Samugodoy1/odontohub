@@ -56,6 +56,7 @@ import { Dashboard } from './components/Dashboard';
 import { Finance } from './components/Finance';
 import { PreAtendimento } from './components/PreAtendimento';
 import { PatientPortal } from './components/PatientPortal';
+import { PortalInbox } from './components/PortalInbox';
 import { formatDate, isOverdue, getFreeSlots, getSuggestion, FreeSlot } from './utils/dateUtils';
 
 // Types
@@ -362,7 +363,7 @@ const LegacyClinicalRedirect = () => {
 
 export default function App() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin' | 'portal'>('dashboard');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -2181,6 +2182,7 @@ export default function App() {
                 <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="portal" icon={LinkIcon} label="Portal Paciente" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="configuracoes" icon={Settings} label="Configurações" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
               </nav>
             </aside>
@@ -2436,6 +2438,7 @@ export default function App() {
           <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="portal" icon={LinkIcon} label="Portal Paciente" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           {user?.role?.toUpperCase() === 'ADMIN' && (
             <SidebarItem id="admin" icon={UserCog} label="Gestão de Dentistas" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           )}
@@ -4884,6 +4887,26 @@ export default function App() {
               </div>
             )}
 
+            {activeTab === 'portal' && (
+              <div className="space-y-8">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Portal do Paciente</h2>
+                  <p className="text-sm text-slate-500">Solicitações de agendamento e fichas de pré-atendimento enviadas pelos pacientes</p>
+                </div>
+                <PortalInbox
+                  apiFetch={apiFetch}
+                  onSchedulePatient={(patientId, _patientName, preferredDate) => {
+                    const p = patients.find(pt => pt.id === patientId);
+                    if (p) openPatientAppointmentModal(p);
+                  }}
+                  onOpenPatient={(id) => {
+                    openPatientRecord(id);
+                    setActiveTab('prontuario');
+                  }}
+                />
+              </div>
+            )}
+
             {activeTab === 'configuracoes' && profile && (
               <div className="max-w-2xl mx-auto space-y-6">
 
@@ -6413,10 +6436,7 @@ export default function App() {
           <BottomNavItem id="dashboard" label="Início" icon={Home} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="agenda" label="Agenda" icon={Calendar} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="pacientes" label="Pacientes" icon={Users} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
-          <BottomNavItem id="financeiro" label="Financeiro" icon={DollarSign} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
-          {user?.role?.toUpperCase() === 'ADMIN' && (
-            <BottomNavItem id="admin" label="Dentistas" icon={UserCog} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
-          )}
+          <BottomNavItem id="portal" label="Portal" icon={LinkIcon} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
           <BottomNavItem id="configuracoes" label="Mais" icon={Settings} activeTab={activeTab} setActiveTab={setActiveTab} navigate={navigate} />
         </nav>
       </div>

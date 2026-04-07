@@ -402,3 +402,41 @@ export const uploadPortalDocument = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Erro ao enviar documento' });
   }
 };
+
+// ─── Get intake forms (dentist side) ───
+export const getIntakeForms = async (req: Request, res: Response) => {
+  try {
+    const dentistId = req.user?.id;
+    const result = await query(
+      `SELECT pif.id, pif.patient_id, pif.form_data, pif.status, pif.created_at,
+              p.name as patient_name, p.phone as patient_phone
+       FROM patient_intake_forms pif
+       JOIN patients p ON p.id = pif.patient_id
+       WHERE pif.dentist_id = $1
+       ORDER BY pif.created_at DESC
+       LIMIT 100`,
+      [dentistId]
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error('Error fetching intake forms:', error);
+    res.status(500).json({ error: 'Erro ao buscar fichas' });
+  }
+};
+
+// ─── Mark intake form as reviewed (dentist side) ───
+export const reviewIntakeForm = async (req: Request, res: Response) => {
+  try {
+    const dentistId = req.user?.id;
+    const { id } = req.params;
+    await query(
+      'UPDATE patient_intake_forms SET status = $1, reviewed_at = NOW() WHERE id = $2 AND dentist_id = $3',
+      ['REVIEWED', id, dentistId]
+    );
+    res.json({ message: 'Ficha marcada como revisada' });
+  } catch (error: any) {
+    console.error('Error reviewing intake form:', error);
+    res.status(500).json({ error: 'Erro ao revisar ficha' });
+  }
+};
+
