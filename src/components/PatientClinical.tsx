@@ -8,6 +8,7 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   Clock3,
   CreditCard,
@@ -243,6 +244,7 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
   const [isEditingAnamnese, setIsEditingAnamnese] = useState(false);
   const [anamneseForm, setAnamneseForm] = useState({ medical_history: '', allergies: '', medications: '' });
   const [isSavingAnamnese, setIsSavingAnamnese] = useState(false);
+  const [showAnamneseExtra, setShowAnamneseExtra] = useState(false);
   const [patientFinancial, setPatientFinancial] = useState<{ transactions: any[]; paymentPlans: any[]; installments: any[] } | null>(null);
   const [isLoadingFinancial, setIsLoadingFinancial] = useState(false);
   const infoPanelRef = useRef<HTMLElement | null>(null);
@@ -1818,6 +1820,45 @@ export const PatientClinical: React.FC<PatientClinicalProps> = ({
                           </div>
                           <p className={`leading-relaxed ${hasContent ? 'text-amber-900 font-semibold' : 'text-slate-700'}`}>{val || 'Não informado'}</p>
                         </div>
+                      );
+                    })()}
+
+                    {/* Ver mais — campos do pré-atendimento */}
+                    {(() => {
+                      const extra = patient?.anamnesis;
+                      const hasExtra = extra && (extra.chief_complaint || extra.habits || extra.family_history);
+                      if (!hasExtra) return null;
+
+                      const extraFields = [
+                        { label: 'Queixa principal', value: extra.chief_complaint, color: 'bg-blue-50 border-blue-200/70', labelColor: 'text-blue-600' },
+                        { label: 'Hábitos', value: extra.habits, color: 'bg-violet-50 border-violet-200/70', labelColor: 'text-violet-600' },
+                        { label: 'Histórico familiar', value: extra.family_history, color: 'bg-teal-50 border-teal-200/70', labelColor: 'text-teal-600' },
+                      ].filter(f => f.value && f.value.trim());
+
+                      if (extraFields.length === 0) return null;
+
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setShowAnamneseExtra(v => !v)}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+                          >
+                            {showAnamneseExtra ? 'Ver menos' : `Ver mais (${extraFields.length})`}
+                            <ChevronDown size={13} className={`transition-transform ${showAnamneseExtra ? 'rotate-180' : ''}`} />
+                          </button>
+                          {showAnamneseExtra && (
+                            <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                              {extraFields.map(f => (
+                                <div key={f.label} className={`p-3.5 rounded-[18px] border ${f.color}`}>
+                                  <p className={`text-[10px] font-extrabold uppercase tracking-[0.1em] ${f.labelColor} mb-1.5`}>{f.label}</p>
+                                  <p className="text-slate-700 leading-relaxed">{f.value}</p>
+                                </div>
+                              ))}
+                              <p className="text-[10px] text-slate-300 text-center">Informações enviadas pelo paciente via pré-atendimento</p>
+                            </div>
+                          )}
+                        </>
                       );
                     })()}
                   </>

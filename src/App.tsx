@@ -73,6 +73,10 @@ interface Patient {
     medical_history: string;
     allergies: string;
     medications: string;
+    chief_complaint?: string;
+    habits?: string;
+    family_history?: string;
+    vital_signs?: string;
   };
   evolution?: Array<{
     id: number;
