@@ -4305,35 +4305,26 @@ export default function App() {
                               <p className="text-[13px] text-slate-400">Cadastro, prontuário e acompanhamento dos seus pacientes</p>
                             )}
                           </div>
-                        </div>
-
-                        {/* Sub-view toggle */}
-                        <div className="flex bg-slate-100 p-1 rounded-2xl">
-                          <button
-                            type="button"
-                            onClick={() => setPatientsSubView('list')}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                              patientsSubView === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                          >
-                            <Users size={16} />
-                            Lista
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPatientsSubView('portal')}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                              patientsSubView === 'portal' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                          >
-                            <ClipboardList size={16} />
-                            Solicitações
-                            {portalPendingCount > 0 && (
-                              <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-                                {portalPendingCount}
-                              </span>
-                            )}
-                          </button>
+                          {/* Botão Solicitações — só aparece quando há pendências */}
+                          {portalPendingCount > 0 && patientsSubView === 'list' && (
+                            <button
+                              type="button"
+                              onClick={() => setPatientsSubView('portal')}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors text-[12px] font-semibold shrink-0"
+                            >
+                              <ClipboardList size={13} />
+                              {portalPendingCount} {portalPendingCount === 1 ? 'solicitação' : 'solicitações'}
+                            </button>
+                          )}
+                          {patientsSubView === 'portal' && (
+                            <button
+                              type="button"
+                              onClick={() => setPatientsSubView('list')}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors text-[12px] font-semibold shrink-0"
+                            >
+                              ← Lista
+                            </button>
+                          )}
                         </div>
 
                         {patientsSubView === 'list' && (
