@@ -24,7 +24,7 @@ export const generatePortalLink = async (req: Request, res: Response) => {
     }
 
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const expiresAt = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000); // No practical expiration
 
     // Invalidate previous tokens for this patient
     await query(
@@ -38,13 +38,21 @@ export const generatePortalLink = async (req: Request, res: Response) => {
       [patient_id, dentistId, token, expiresAt]
     );
 
+    // Check if patient has any finished appointments (first visit = no finished appointments)
+    const finishedCheck = await query(
+      `SELECT 1 FROM appointments WHERE patient_id = $1 AND dentist_id = $2 AND status = 'FINISHED' LIMIT 1`,
+      [patient_id, dentistId]
+    );
+    const isFirstVisit = finishedCheck.rows.length === 0;
+
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const portalUrl = `${baseUrl}/portal/${token}`;
     const preAtendimentoUrl = `${baseUrl}/pre-atendimento/${token}`;
 
     res.json({
       portal_url: portalUrl,
-      pre_atendimento_url: preAtendimentoUrl,
+      pre_atendimento_url: isFirstVisit ? preAtendimentoUrl : null,
+      is_first_visit: isFirstVisit,
       token,
       expires_at: expiresAt,
       patient: patientCheck.rows[0]

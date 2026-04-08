@@ -32,7 +32,31 @@ import {
   getPaymentPlans,
   getInstallments,
   payInstallment,
-  getFinancialInsights
+  getFinancialInsights,
+  getInsurancePlans,
+  createInsurancePlan,
+  updateInsurancePlan,
+  deleteInsurancePlan,
+  linkPatientInsurance,
+  getInvoices,
+  createInvoice,
+  cancelInvoice,
+  retryInvoice,
+  downloadInvoiceXml,
+  getCityProviderMapEndpoint,
+  getDelinquencyRecords,
+  syncDelinquency,
+  updateDelinquencyRecord,
+  getPixConfig,
+  savePixConfig,
+  createPixPayment,
+  getPixPayments,
+  confirmPixPayment,
+  createAdvancedPaymentPlan,
+  getFiscalConfig,
+  saveFiscalConfig,
+  uploadCertificado,
+  getNfseProviders,
 } from '../server/controllers/financeController.js';
 import { 
   getDentists, 
@@ -58,6 +82,12 @@ import {
   getDashboardData,
   getSchedulingSuggestionsEndpoint
 } from '../server/controllers/intelligenceController.js';
+import {
+  getAppointmentPredictions,
+  getDelinquencyPredictions,
+  getTreatmentSuggestions,
+  getMLDashboardData
+} from '../server/controllers/mlController.js';
 import {
   generatePortalLink,
   authenticatePortalToken,
@@ -149,11 +179,45 @@ app.get(['/finance', '/api/finance'], getTransactions);
 app.get(['/finance/summary', '/api/finance/summary'], getFinancialSummary);
 app.get(['/finance/payment-plans', '/api/finance/payment-plans'], getPaymentPlans);
 app.post(['/finance/payment-plans', '/api/finance/payment-plans'], createPaymentPlan);
+app.post(['/finance/payment-plans/advanced', '/api/finance/payment-plans/advanced'], createAdvancedPaymentPlan);
 app.get(['/finance/installments', '/api/finance/installments'], getInstallments);
 app.patch(['/finance/installments/:id/pay', '/api/finance/installments/:id/pay'], payInstallment);
 app.post(['/finance', '/api/finance'], createTransaction);
 app.delete(['/finance/:id', '/api/finance/:id'], deleteTransaction);
 app.get(['/finance/insights', '/api/finance/insights'], getFinancialInsights);
+
+// Convênios (ANS)
+app.get(['/finance/insurance-plans', '/api/finance/insurance-plans'], getInsurancePlans);
+app.post(['/finance/insurance-plans', '/api/finance/insurance-plans'], createInsurancePlan);
+app.patch(['/finance/insurance-plans/:id', '/api/finance/insurance-plans/:id'], updateInsurancePlan);
+app.delete(['/finance/insurance-plans/:id', '/api/finance/insurance-plans/:id'], deleteInsurancePlan);
+app.post(['/finance/patient-insurance', '/api/finance/patient-insurance'], linkPatientInsurance);
+
+// Notas Fiscais
+app.get(['/finance/invoices', '/api/finance/invoices'], getInvoices);
+app.post(['/finance/invoices', '/api/finance/invoices'], createInvoice);
+app.patch(['/finance/invoices/:id/cancel', '/api/finance/invoices/:id/cancel'], cancelInvoice);
+app.patch(['/finance/invoices/:id/retry', '/api/finance/invoices/:id/retry'], retryInvoice);
+app.get(['/finance/invoices/:id/xml', '/api/finance/invoices/:id/xml'], downloadInvoiceXml);
+
+// Configuração Fiscal (NFS-e)
+app.get(['/finance/fiscal-config', '/api/finance/fiscal-config'], getFiscalConfig);
+app.post(['/finance/fiscal-config', '/api/finance/fiscal-config'], saveFiscalConfig);
+app.post(['/finance/fiscal-config/certificado', '/api/finance/fiscal-config/certificado'], uploadCertificado);
+app.get(['/finance/nfse-providers', '/api/finance/nfse-providers'], getNfseProviders);
+app.get(['/finance/nfse-city-map', '/api/finance/nfse-city-map'], getCityProviderMapEndpoint);
+
+// Inadimplência
+app.get(['/finance/delinquency', '/api/finance/delinquency'], getDelinquencyRecords);
+app.post(['/finance/delinquency/sync', '/api/finance/delinquency/sync'], syncDelinquency);
+app.patch(['/finance/delinquency/:id', '/api/finance/delinquency/:id'], updateDelinquencyRecord);
+
+// Pix
+app.get(['/finance/pix/config', '/api/finance/pix/config'], getPixConfig);
+app.post(['/finance/pix/config', '/api/finance/pix/config'], savePixConfig);
+app.get(['/finance/pix/payments', '/api/finance/pix/payments'], getPixPayments);
+app.post(['/finance/pix/payments', '/api/finance/pix/payments'], createPixPayment);
+app.patch(['/finance/pix/:id/confirm', '/api/finance/pix/:id/confirm'], confirmPixPayment);
 
 // Dentists
 app.get(['/dentists', '/api/dentists'], getDentists);
@@ -173,6 +237,12 @@ app.delete(['/files/:id', '/api/files/:id'], deleteFile);
 app.get(['/intelligence/patients', '/api/intelligence/patients'], getPatientsIntelligence);
 app.get(['/intelligence/dashboard', '/api/intelligence/dashboard'], getDashboardData);
 app.get(['/intelligence/scheduling', '/api/intelligence/scheduling'], getSchedulingSuggestionsEndpoint);
+
+// ML Predictions
+app.get(['/ml/dashboard', '/api/ml/dashboard'], getMLDashboardData);
+app.get(['/ml/appointments', '/api/ml/appointments'], getAppointmentPredictions);
+app.get(['/ml/delinquency', '/api/ml/delinquency'], getDelinquencyPredictions);
+app.get(['/ml/treatments', '/api/ml/treatments'], getTreatmentSuggestions);
 
 // Admin
 app.get(['/admin/users', '/api/admin/users'], requireAdmin, getUsers);

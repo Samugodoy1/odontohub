@@ -57,6 +57,7 @@ import { Finance } from './components/Finance';
 import { PreAtendimento } from './components/PreAtendimento';
 import { PatientPortal } from './components/PatientPortal';
 import { PortalInbox } from './components/PortalInbox';
+import { MLInsights } from './components/MLInsights';
 import { formatDate, isOverdue, getFreeSlots, getSuggestion, FreeSlot } from './utils/dateUtils';
 
 // Types
@@ -367,7 +368,7 @@ const LegacyClinicalRedirect = () => {
 
 export default function App() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin' | 'portal'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'agenda' | 'pacientes' | 'financeiro' | 'documentos' | 'prontuario' | 'configuracoes' | 'admin' | 'portal' | 'inteligencia'>('dashboard');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -1339,7 +1340,7 @@ export default function App() {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
   };
 
-  const [portalLinkData, setPortalLinkData] = useState<{ url: string; preUrl: string; patientName: string } | null>(null);
+  const [portalLinkData, setPortalLinkData] = useState<{ url: string; preUrl: string | null; patientName: string } | null>(null);
 
   const generatePatientPortalLink = async (patient: Patient) => {
     try {
@@ -1353,9 +1354,12 @@ export default function App() {
         return;
       }
       const data = await res.json();
+
+      // Only show pre-atendimento link for first visit (no finished appointments)
+      const hasFinished = appointments.some(a => a.patient_id === patient.id && a.status === 'FINISHED');
       setPortalLinkData({
         url: data.portal_url,
-        preUrl: data.pre_atendimento_url,
+        preUrl: hasFinished ? null : data.pre_atendimento_url,
         patientName: patient.name
       });
     } catch {
@@ -2198,6 +2202,7 @@ export default function App() {
                 <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+                <SidebarItem id="inteligencia" icon={Sparkles} label="Inteligência ML" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
                 <SidebarItem id="configuracoes" icon={Settings} label="Configurações" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
               </nav>
             </aside>
@@ -2453,6 +2458,7 @@ export default function App() {
           <SidebarItem id="pacientes" icon={Users} label="Pacientes" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           <SidebarItem id="financeiro" icon={DollarSign} label="Financeiro" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           <SidebarItem id="documentos" icon={FileText} label="Documentos" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
+          <SidebarItem id="inteligencia" icon={Sparkles} label="Inteligência ML" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           {user?.role?.toUpperCase() === 'ADMIN' && (
             <SidebarItem id="admin" icon={UserCog} label="Gestão de Dentistas" activeTab={activeTab} setActiveTab={setActiveTab} setIsSidebarOpen={setIsSidebarOpen} navigate={navigate} />
           )}
@@ -2711,8 +2717,8 @@ export default function App() {
                   <div className="divide-y divide-slate-100">
                     {(() => {
                       const getFilteredAppointments = () => {
-                        // Always include FINISHED, NO_SHOW and CANCELLED so status changes remain visible across all views.
-                        const effectiveStatusFilter = [...statusFilter, 'FINISHED', 'NO_SHOW', 'CANCELLED'].filter((v, i, a) => a.indexOf(v) === i);
+                        // Always include FINISHED and NO_SHOW so completed appointments remain visible; CANCELLED is excluded by default.
+                        const effectiveStatusFilter = [...statusFilter, 'FINISHED', 'NO_SHOW'].filter((v, i, a) => a.indexOf(v) === i);
                         
                         let filtered = appointments.filter(a => effectiveStatusFilter.length === 0 || effectiveStatusFilter.includes(a.status))
                           .filter(a => agendaSearchTerm === '' || (a.patient_name || '').toLowerCase().includes((agendaSearchTerm || '').toLowerCase()));
@@ -4034,7 +4040,7 @@ export default function App() {
                       const pastFinishedAppointments = filtered.filter(a => {
                         const appDate = new Date(a.start_time);
                         return a.status === 'FINISHED' && appDate <= _now && appDate.toDateString() === selectedDate.toDateString();
-                      }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+                      }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
                       // Remaining appointments (exclude ones already shown above to avoid duplication)
                       const todayAppointments = filtered.filter(a => {
@@ -4701,6 +4707,7 @@ export default function App() {
                 formatDate={formatDate}
                 setActiveTab={setActiveTab}
                 setIsModalOpen={setIsModalOpen}
+                profile={profile}
               />
             )}
 
@@ -4942,6 +4949,10 @@ export default function App() {
                 </div>
                 <Documents patients={patients} profile={profile} apiFetch={apiFetch} imprimirDocumento={imprimirDocumento} />
               </div>
+            )}
+
+            {activeTab === 'inteligencia' && (
+              <MLInsights openPatientRecord={openPatientRecord} />
             )}
 
             {activeTab === 'configuracoes' && profile && (
@@ -6571,11 +6582,12 @@ export default function App() {
                   </button>
                 </div>
                 <p className="text-sm text-slate-500 mb-5">
-                  Links gerados para <span className="font-semibold text-slate-700">{portalLinkData.patientName}</span>. Válidos por 7 dias.
+                  Links gerados para <span className="font-semibold text-slate-700">{portalLinkData.patientName}</span>.
                 </p>
 
                 <div className="space-y-3">
-                  {/* Pre-atendimento link */}
+                  {/* Pre-atendimento link — only for first visit */}
+                  {portalLinkData.preUrl && (
                   <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100">
                     <div className="flex items-center gap-2 mb-2">
                       <ClipboardList size={16} className="text-emerald-600" />
@@ -6589,13 +6601,14 @@ export default function App() {
                         className="flex-1 text-xs bg-white border border-emerald-200 rounded-lg px-3 py-2 text-slate-600 truncate"
                       />
                       <button
-                        onClick={() => { navigator.clipboard.writeText(portalLinkData.preUrl); }}
+                        onClick={() => { navigator.clipboard.writeText(portalLinkData.preUrl!); }}
                         className="px-3 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors whitespace-nowrap"
                       >
                         Copiar
                       </button>
                     </div>
                   </div>
+                  )}
 
                   {/* Portal link */}
                   <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
