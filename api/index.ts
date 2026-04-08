@@ -100,7 +100,16 @@ import {
   updateAppointmentRequest,
   uploadPortalDocument,
   getIntakeForms,
-  reviewIntakeForm
+  reviewIntakeForm,
+  cancelAppointment,
+  rescheduleAppointment,
+  sendPortalMessage,
+  getPortalMessages,
+  getDentistMessages,
+  sendDentistMessage,
+  getUnreadMessageCounts,
+  informPayment,
+  getClinicPixInfo
 } from '../server/controllers/portalController.js';
 import { authenticate, requireAdmin } from '../server/utils/auth.js';
 import { query } from '../server/utils/db.js';
@@ -148,6 +157,12 @@ app.get(['/portal/data', '/api/portal/data'], verifyPortalAuth, getPortalData);
 app.post(['/portal/intake', '/api/portal/intake'], verifyPortalAuth, submitIntakeForm);
 app.post(['/portal/consent', '/api/portal/consent'], verifyPortalAuth, signConsent);
 app.post(['/portal/request-appointment', '/api/portal/request-appointment'], verifyPortalAuth, requestAppointment);
+app.post(['/portal/cancel-appointment', '/api/portal/cancel-appointment'], verifyPortalAuth, cancelAppointment);
+app.post(['/portal/reschedule-appointment', '/api/portal/reschedule-appointment'], verifyPortalAuth, rescheduleAppointment);
+app.post(['/portal/messages', '/api/portal/messages'], verifyPortalAuth, sendPortalMessage);
+app.get(['/portal/messages', '/api/portal/messages'], verifyPortalAuth, getPortalMessages);
+app.post(['/portal/inform-payment', '/api/portal/inform-payment'], verifyPortalAuth, informPayment);
+app.get(['/portal/pix-info', '/api/portal/pix-info'], verifyPortalAuth, getClinicPixInfo);
 app.post(['/portal/upload', '/api/portal/upload'], verifyPortalAuth, upload.single('file'), uploadPortalDocument);
 
 // Protected routes
@@ -255,5 +270,8 @@ app.get(['/portal/appointment-requests', '/api/portal/appointment-requests'], ge
 app.patch(['/portal/appointment-requests/:id', '/api/portal/appointment-requests/:id'], updateAppointmentRequest);
 app.get(['/portal/intake-forms', '/api/portal/intake-forms'], getIntakeForms);
 app.patch(['/portal/intake-forms/:id/review', '/api/portal/intake-forms/:id/review'], reviewIntakeForm);
+app.get(['/portal/messages/unread', '/api/portal/messages/unread'], getUnreadMessageCounts);
+app.get(['/portal/messages/:patient_id', '/api/portal/messages/:patient_id'], getDentistMessages);
+app.post(['/portal/messages/:patient_id', '/api/portal/messages/:patient_id'], sendDentistMessage);
 
 export default app;

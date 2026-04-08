@@ -576,6 +576,28 @@ export async function initDb() {
         END IF;
       END $$;
 
+      -- Portal Messages (chat paciente <-> dentista)
+      CREATE TABLE IF NOT EXISTS portal_messages (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+        dentist_id INTEGER NOT NULL REFERENCES users(id),
+        sender TEXT NOT NULL CHECK (sender IN ('patient', 'dentist')),
+        message TEXT NOT NULL,
+        read BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Add request_type to appointment_requests if not exists
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointment_requests' AND column_name='request_type') THEN
+          ALTER TABLE appointment_requests ADD COLUMN request_type TEXT DEFAULT 'NEW';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointment_requests' AND column_name='appointment_id') THEN
+          ALTER TABLE appointment_requests ADD COLUMN appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+
       -- Bootstrap default admin if not exists
       -- Password is 'admin123'
       INSERT INTO users (name, email, password, role, status)
