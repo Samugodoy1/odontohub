@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -141,6 +141,9 @@ export function PatientPortal() {
   const [appointmentSubmittingId, setAppointmentSubmittingId] = useState<number | null>(null);
   const [confirmedAppointmentId, setConfirmedAppointmentId] = useState<number | null>(null);
   const [rescheduleRequestedAppointmentId, setRescheduleRequestedAppointmentId] = useState<number | null>(null);
+
+  const scheduleModalRef = useRef<HTMLDivElement | null>(null);
+  const pixModalRef = useRef<HTMLDivElement | null>(null);
 
   // Payment
   const [actionSubmitting, setActionSubmitting] = useState(false);
@@ -294,6 +297,57 @@ export function PatientPortal() {
     try { await navigator.clipboard.writeText(text); setPixCopied(true); setTimeout(() => setPixCopied(false), 2000); } catch {}
   };
 
+  // Manage focus + keyboard for modals (basic trap + Escape)
+  useEffect(() => {
+    if (!showScheduleModal) return;
+    const el = scheduleModalRef.current;
+    const first = el?.querySelector<HTMLElement>('input, button, select, textarea, [tabindex]:not([tabindex="-1"])');
+    first?.focus();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeScheduleModal();
+      }
+      if (e.key === 'Tab') {
+        const focusable = el?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea, input:not([type="hidden"]), select, [tabindex]:not([tabindex="-1"])');
+        if (!focusable || focusable.length === 0) return;
+        const nodes = Array.from(focusable);
+        const idx = nodes.indexOf(document.activeElement as HTMLElement);
+        if (e.shiftKey) {
+          if (idx === 0) { nodes[nodes.length - 1].focus(); e.preventDefault(); }
+        } else {
+          if (idx === nodes.length - 1) { nodes[0].focus(); e.preventDefault(); }
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [showScheduleModal]);
+
+  useEffect(() => {
+    if (!showPixModal) return;
+    const el = pixModalRef.current;
+    const first = el?.querySelector<HTMLElement>('button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    first?.focus();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (!actionSubmitting) setShowPixModal(null);
+      }
+      if (e.key === 'Tab') {
+        const focusable = el?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea, input:not([type="hidden"]), select, [tabindex]:not([tabindex="-1"])');
+        if (!focusable || focusable.length === 0) return;
+        const nodes = Array.from(focusable);
+        const idx = nodes.indexOf(document.activeElement as HTMLElement);
+        if (e.shiftKey) {
+          if (idx === 0) { nodes[nodes.length - 1].focus(); e.preventDefault(); }
+        } else {
+          if (idx === nodes.length - 1) { nodes[0].focus(); e.preventDefault(); }
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [showPixModal, actionSubmitting]);
+
   const openNewScheduleModal = () => {
     setScheduleMode('new');
     setScheduleTargetAppointment(null);
@@ -327,7 +381,7 @@ export function PatientPortal() {
     <div className="min-h-screen bg-[#F2F2F7] flex items-center justify-center">
       <div className="flex flex-col items-center gap-5">
         <div className="w-10 h-10 border-[3px] border-[#C6C6C8] border-t-[#0C9B72] rounded-full animate-spin" />
-        <p className="text-[#8E8E93] text-[15px] font-medium tracking-tight">Carregando...</p>
+        <p role="status" aria-live="polite" className="text-[#8E8E93] text-[15px] font-medium tracking-tight">Carregando...</p>
       </div>
     </div>
   );
@@ -631,11 +685,15 @@ export function PatientPortal() {
 
   return (
     <div className="min-h-screen bg-[#F2F2F7] pb-24">
+      {/* Accessible announcer for screen readers */}
+      <div id="a11y-announcer" aria-live="polite" className="sr-only">
+        {error || (scheduleSuccess ? (scheduleMode === 'reschedule' ? 'Pedido de reagendamento enviado' : 'Solicitação de agendamento enviada') : '') || (paymentInformed ? 'Pagamento informado' : '') || (pixCopied ? 'Chave PIX copiada' : '')}
+      </div>
       {/* ─── Header: frosted, minimal ─── */}
       <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-[#E5E5EA]">
         <div className="max-w-lg mx-auto px-5 py-4 flex items-center gap-3.5">
           {clinic?.photo_url ? (
-            <img src={clinic.photo_url} alt="" className="w-9 h-9 rounded-full object-cover ring-1 ring-[#C6C6C8]/40" />
+            <img src={clinic.photo_url} alt={clinic?.clinic_name || clinic?.name || 'Minha Clínica'} className="w-9 h-9 rounded-full object-cover ring-1 ring-[#C6C6C8]/40" />
           ) : (
             <div className="w-9 h-9 bg-[#E5E5EA] rounded-full flex items-center justify-center">
               <Stethoscope size={18} className="text-[#8E8E93]" />
@@ -647,7 +705,7 @@ export function PatientPortal() {
             </p>
           </div>
           {patient.photo_url ? (
-            <img src={patient.photo_url} alt="" className="w-8 h-8 rounded-full object-cover ring-1 ring-[#C6C6C8]/40" />
+            <img src={patient.photo_url} alt={patient.name} className="w-8 h-8 rounded-full object-cover ring-1 ring-[#C6C6C8]/40" />
           ) : (
             <div className="w-8 h-8 bg-[#E5E5EA] rounded-full flex items-center justify-center text-[13px] font-semibold text-[#8E8E93]">
               {patient.name.charAt(0)}
@@ -1438,7 +1496,7 @@ export function PatientPortal() {
 
       {/* ─── Schedule Modal (iOS sheet) ─── */}
       <AnimatePresence>
-        {showScheduleModal && (
+          {showScheduleModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1447,6 +1505,10 @@ export function PatientPortal() {
             onClick={closeScheduleModal}
           >
             <motion.div
+              ref={scheduleModalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="schedule-modal-title"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
@@ -1464,7 +1526,7 @@ export function PatientPortal() {
                   <div className="w-14 h-14 bg-[#34C759]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <CheckCircle2 size={28} className="text-[#34C759]" />
                   </div>
-                  <h3 className="text-[18px] font-semibold text-[#1C1C1E] mb-1.5 tracking-tight">
+                  <h3 id="schedule-modal-title" className="text-[18px] font-semibold text-[#1C1C1E] mb-1.5 tracking-tight">
                     {scheduleMode === 'reschedule' ? 'Pedido Enviado' : 'Solicitação Enviada'}
                   </h3>
                   <p className="text-[#8E8E93] text-[14px]">
@@ -1477,7 +1539,7 @@ export function PatientPortal() {
                 <div className="px-5 pb-6 pt-3">
                   <div className="flex items-center justify-between mb-6">
                     <div>
-                      <h3 className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">
+                      <h3 id="schedule-modal-title" className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">
                         {scheduleMode === 'reschedule' ? 'Reagendar Consulta' : 'Solicitar Consulta'}
                       </h3>
                       {scheduleTargetAppointment && (
@@ -1487,7 +1549,9 @@ export function PatientPortal() {
                       )}
                     </div>
                     <button
+                      type="button"
                       onClick={closeScheduleModal}
+                      aria-label="Fechar"
                       className="w-8 h-8 bg-[#E5E5EA] rounded-full flex items-center justify-center active:scale-90 transition-transform"
                     >
                       <X size={16} className="text-[#8E8E93]" />
@@ -1557,7 +1621,12 @@ export function PatientPortal() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end sm:items-center justify-center"
             onClick={() => !actionSubmitting && setShowPixModal(null)}>
-            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+            <motion.div
+              ref={pixModalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pix-modal-title"
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
               onClick={(e) => e.stopPropagation()}
               className="bg-white rounded-t-[20px] sm:rounded-[20px] w-full sm:max-w-md shadow-2xl">
@@ -1567,14 +1636,14 @@ export function PatientPortal() {
                   <div className="w-14 h-14 bg-[#34C759]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <CheckCircle2 size={28} className="text-[#34C759]" />
                   </div>
-                  <h3 className="text-[18px] font-semibold text-[#1C1C1E] mb-1">Pagamento Informado</h3>
+                  <h3 id="pix-modal-title" className="text-[18px] font-semibold text-[#1C1C1E] mb-1">Pagamento Informado</h3>
                   <p className="text-[#8E8E93] text-[14px]">A clínica confirmará o recebimento.</p>
                 </div>
               ) : (
                 <div className="px-5 pb-6 pt-3">
                   <div className="flex items-center justify-between mb-5">
-                    <h3 className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">Pagar</h3>
-                    <button onClick={() => setShowPixModal(null)} className="w-8 h-8 bg-[#E5E5EA] rounded-full flex items-center justify-center"><X size={16} className="text-[#8E8E93]" /></button>
+                    <h3 id="pix-modal-title" className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">Pagar</h3>
+                    <button type="button" onClick={() => setShowPixModal(null)} aria-label="Fechar" className="w-8 h-8 bg-[#E5E5EA] rounded-full flex items-center justify-center"><X size={16} className="text-[#8E8E93]" /></button>
                   </div>
 
                   <div className="bg-[#F2F2F7] rounded-xl p-4 mb-4 text-center">
