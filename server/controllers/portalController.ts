@@ -529,6 +529,59 @@ export const rescheduleAppointment = async (req: Request, res: Response) => {
   }
 };
 
+// ─── Confirm appointment (patient side) ───
+export const confirmAppointment = async (req: Request, res: Response) => {
+  try {
+    const portal = (req as any).portal;
+    const { appointment_id } = req.body;
+
+    if (!appointment_id) {
+      return res.status(400).json({ error: 'ID da consulta é obrigatório' });
+    }
+
+    // patient_id é suficiente — getPortalData lista consultas de todos os dentistas
+    const appt = await query(
+      `SELECT id, status, start_time, dentist_id
+       FROM appointments
+       WHERE id = $1
+         AND patient_id = $2
+         AND status IN ('SCHEDULED', 'CONFIRMED')`,
+      [appointment_id, portal.patient_id]
+    );
+
+    if (appt.rows.length === 0) {
+      return res.status(404).json({ error: 'Consulta não encontrada ou não pode ser confirmada' });
+    }
+
+    const row = appt.rows[0];
+
+    if (row.status !== 'CONFIRMED') {
+      await query(
+        `UPDATE appointments SET status = 'CONFIRMED' WHERE id = $1 AND patient_id = $2`,
+        [appointment_id, portal.patient_id]
+      );
+
+      const scheduledAt = new Date(row.start_time).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      await query(
+        `INSERT INTO portal_messages (patient_id, dentist_id, sender, message)
+         VALUES ($1, $2, 'patient', $3)`,
+        [portal.patient_id, row.dentist_id, `Confirmei minha presença para a consulta de ${scheduledAt}.`]
+      );
+    }
+
+    res.json({ message: 'Consulta confirmada com sucesso!' });
+  } catch (error: any) {
+    console.error('Error confirming appointment:', error);
+    res.status(500).json({ error: 'Erro ao confirmar consulta' });
+  }
+};
+
 // ─── Send message (patient side) ───
 export const sendPortalMessage = async (req: Request, res: Response) => {
   try {

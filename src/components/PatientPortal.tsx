@@ -136,6 +136,11 @@ export function PatientPortal() {
   });
   const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
   const [scheduleSuccess, setScheduleSuccess] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<'new' | 'reschedule'>('new');
+  const [scheduleTargetAppointment, setScheduleTargetAppointment] = useState<PortalData['appointments'][number] | null>(null);
+  const [appointmentSubmittingId, setAppointmentSubmittingId] = useState<number | null>(null);
+  const [confirmedAppointmentId, setConfirmedAppointmentId] = useState<number | null>(null);
+  const [rescheduleRequestedAppointmentId, setRescheduleRequestedAppointmentId] = useState<number | null>(null);
 
   // Payment
   const [actionSubmitting, setActionSubmitting] = useState(false);
@@ -179,25 +184,86 @@ export function PatientPortal() {
     if (!scheduleForm.preferred_date) return;
     setScheduleSubmitting(true);
     try {
-      const res = await fetch('/api/portal/request-appointment', {
+      const isReschedule = scheduleMode === 'reschedule' && scheduleTargetAppointment;
+      const res = await fetch(isReschedule ? '/api/portal/reschedule-appointment' : '/api/portal/request-appointment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${sessionToken}`
         },
-        body: JSON.stringify(scheduleForm)
+        body: JSON.stringify(
+          isReschedule
+            ? {
+                appointment_id: scheduleTargetAppointment.id,
+                preferred_date: scheduleForm.preferred_date,
+                preferred_time: scheduleForm.preferred_time,
+                reason: scheduleForm.notes
+              }
+            : scheduleForm
+        )
       });
       if (!res.ok) throw new Error('Erro ao solicitar');
       setScheduleSuccess(true);
+      if (isReschedule) {
+        setRescheduleRequestedAppointmentId(scheduleTargetAppointment.id);
+      }
       setTimeout(() => {
         setShowScheduleModal(false);
         setScheduleSuccess(false);
+        setScheduleMode('new');
+        setScheduleTargetAppointment(null);
         setScheduleForm({ preferred_date: '', preferred_time: '', notes: '' });
       }, 2000);
     } catch {
-      setError('Erro ao solicitar agendamento');
+      setError(scheduleMode === 'reschedule' ? 'Erro ao solicitar reagendamento' : 'Erro ao solicitar agendamento');
     } finally {
       setScheduleSubmitting(false);
+    }
+  };
+
+  const handleConfirmAppointment = async (appointmentId: number) => {
+    // Optimistic update — muda status imediatamente na UI
+    setData((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        appointments: current.appointments.map((a) =>
+          a.id === appointmentId ? { ...a, status: 'CONFIRMED' } : a
+        )
+      };
+    });
+    setConfirmedAppointmentId(appointmentId);
+    setAppointmentSubmittingId(appointmentId);
+
+    try {
+      const res = await fetch('/api/portal/confirm-appointment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ appointment_id: appointmentId })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        // Reverte update otimista em caso de erro
+        setData((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            appointments: current.appointments.map((a) =>
+              a.id === appointmentId ? { ...a, status: 'SCHEDULED' } : a
+            )
+          };
+        });
+        setConfirmedAppointmentId(null);
+        throw new Error(payload?.error || 'Erro ao confirmar consulta');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Erro ao confirmar consulta');
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setAppointmentSubmittingId(null);
     }
   };
 
@@ -226,6 +292,35 @@ export function PatientPortal() {
 
   const copyToClipboard = async (text: string) => {
     try { await navigator.clipboard.writeText(text); setPixCopied(true); setTimeout(() => setPixCopied(false), 2000); } catch {}
+  };
+
+  const openNewScheduleModal = () => {
+    setScheduleMode('new');
+    setScheduleTargetAppointment(null);
+    setScheduleSuccess(false);
+    setScheduleForm({ preferred_date: '', preferred_time: '', notes: '' });
+    setShowScheduleModal(true);
+  };
+
+  const openRescheduleModal = (appointment: PortalData['appointments'][number]) => {
+    setScheduleMode('reschedule');
+    setScheduleTargetAppointment(appointment);
+    setScheduleSuccess(false);
+    setScheduleForm({
+      preferred_date: new Date(appointment.start_time).toLocaleDateString('en-CA'),
+      preferred_time: '',
+      notes: ''
+    });
+    setShowScheduleModal(true);
+  };
+
+  const closeScheduleModal = () => {
+    if (scheduleSubmitting) return;
+    setShowScheduleModal(false);
+    setScheduleSuccess(false);
+    setScheduleMode('new');
+    setScheduleTargetAppointment(null);
+    setScheduleForm({ preferred_date: '', preferred_time: '', notes: '' });
   };
 
   if (loading) return (
@@ -275,6 +370,27 @@ export function PatientPortal() {
 
   const formatTimeBR = (d: string) => {
     try { return new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+  };
+
+  const getConfirmationQuestion = (appointmentDate: string) => {
+    const date = new Date(appointmentDate);
+    const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(today.getDate() + 1);
+
+    const isSameDay = (left: Date, right: Date) => (
+      left.getFullYear() === right.getFullYear()
+      && left.getMonth() === right.getMonth()
+      && left.getDate() === right.getDate()
+    );
+
+    const dayLabel = isSameDay(date, today)
+      ? 'hoje'
+      : isSameDay(date, tomorrow)
+      ? 'amanhã'
+      : `dia ${date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+
+    return `Você vem ${dayLabel} às ${formatTimeBR(appointmentDate)}?`;
   };
 
   const statusLabel = (s: string) => {
@@ -761,6 +877,38 @@ export function PatientPortal() {
                         </div>
                       )}
 
+                      {next.status === 'SCHEDULED' && (
+                        <div className="mx-5 mb-4 border-t border-[#F2F2F7] pt-4">
+                          <p className="text-[#1C1C1E] text-[15px] font-semibold tracking-tight mb-3">
+                            {getConfirmationQuestion(next.start_time)}
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleConfirmAppointment(next.id)}
+                              disabled={appointmentSubmittingId === next.id}
+                              className="h-9 px-5 rounded-full bg-[#1C1C1E] text-white text-[13px] font-semibold tracking-tight active:scale-[0.97] transition-transform disabled:opacity-40 flex items-center justify-center"
+                            >
+                              {appointmentSubmittingId === next.id ? (
+                                <div className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" />
+                              ) : 'Confirmar'}
+                            </button>
+                            <button
+                              onClick={() => openRescheduleModal(next)}
+                              disabled={appointmentSubmittingId === next.id}
+                              className="h-9 px-5 rounded-full border border-[#D1D1D6] text-[#3A3A3C] text-[13px] font-semibold tracking-tight active:scale-[0.97] transition-transform"
+                            >
+                              Reagendar
+                            </button>
+                          </div>
+                          {confirmedAppointmentId === next.id && (
+                            <p className="text-[#34C759] text-[12px] font-medium mt-2.5">Horário confirmado ✓</p>
+                          )}
+                          {rescheduleRequestedAppointmentId === next.id && (
+                            <p className="text-[#007AFF] text-[12px] font-medium mt-2.5">Pedido enviado à clínica.</p>
+                          )}
+                        </div>
+                      )}
+
                       {!singleReminder && <div className="pb-5" />}
                     </div>
                   );
@@ -768,7 +916,7 @@ export function PatientPortal() {
 
                 {/* Quick actions row */}
                 <div className="grid grid-cols-4 gap-3">
-                  <PortalQuickAction icon={CalendarPlus} label="Agendar" onClick={() => setShowScheduleModal(true)} />
+                  <PortalQuickAction icon={CalendarPlus} label="Agendar" onClick={openNewScheduleModal} />
                   <PortalQuickAction icon={Activity} label="Evolução" onClick={() => setActiveTab('evolucao')} />
                   <PortalQuickAction icon={FileText} label="Arquivos" onClick={() => setActiveTab('documentos')} />
                   <PortalQuickAction icon={DollarSign} label="Pagamentos" onClick={() => setActiveTab('financeiro')} />
@@ -916,7 +1064,7 @@ export function PatientPortal() {
                 <div className="flex items-center justify-between">
                   <h1 className="text-[#1C1C1E] text-[28px] font-bold tracking-tight">Consultas</h1>
                   <button
-                    onClick={() => setShowScheduleModal(true)}
+                    onClick={openNewScheduleModal}
                     className="h-9 px-4 bg-[#0C9B72] text-white rounded-full text-[13px] font-semibold flex items-center gap-1.5 active:scale-95 transition-transform"
                   >
                     <CalendarPlus size={14} /> Solicitar
@@ -928,7 +1076,37 @@ export function PatientPortal() {
                     <p className="text-[#8E8E93] text-[11px] font-semibold uppercase tracking-widest mb-3">Próximas</p>
                     <div className="bg-white rounded-2xl divide-y divide-[#E5E5EA] shadow-[0_1px_6px_rgba(0,0,0,0.05)]">
                       {futureAppointments.map(a => (
-                        <PortalAppointmentRow key={a.id} appointment={a} formatDate={formatDateBR} formatTime={formatTimeBR} statusLabel={statusLabel} />
+                        <PortalAppointmentRow
+                          key={a.id}
+                          appointment={a}
+                          formatDate={formatDateBR}
+                          formatTime={formatTimeBR}
+                          statusLabel={statusLabel}
+                          actionContent={a.status === 'SCHEDULED' ? (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleConfirmAppointment(a.id)}
+                                disabled={appointmentSubmittingId === a.id}
+                                className="h-8 px-4 rounded-full bg-[#1C1C1E] text-white text-[12px] font-semibold active:scale-[0.97] transition-transform disabled:opacity-40 flex items-center justify-center"
+                              >
+                                {appointmentSubmittingId === a.id ? (
+                                  <div className="w-3.5 h-3.5 border-[1.5px] border-white/25 border-t-white rounded-full animate-spin" />
+                                ) : 'Confirmar'}
+                              </button>
+                              <button
+                                onClick={() => openRescheduleModal(a)}
+                                className="h-8 px-4 rounded-full border border-[#D1D1D6] text-[#3A3A3C] text-[12px] font-semibold active:scale-[0.97] transition-transform"
+                              >
+                                Reagendar
+                              </button>
+                            </div>
+                          ) : null}
+                          actionNotice={confirmedAppointmentId === a.id
+                            ? 'Confirmado ✓'
+                            : rescheduleRequestedAppointmentId === a.id
+                            ? 'Pedido enviado.'
+                            : null}
+                        />
                       ))}
                     </div>
                   </div>
@@ -1266,7 +1444,7 @@ export function PatientPortal() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end sm:items-center justify-center"
-            onClick={() => setShowScheduleModal(false)}
+            onClick={closeScheduleModal}
           >
             <motion.div
               initial={{ y: '100%' }}
@@ -1286,15 +1464,30 @@ export function PatientPortal() {
                   <div className="w-14 h-14 bg-[#34C759]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <CheckCircle2 size={28} className="text-[#34C759]" />
                   </div>
-                  <h3 className="text-[18px] font-semibold text-[#1C1C1E] mb-1.5 tracking-tight">Solicitação Enviada</h3>
-                  <p className="text-[#8E8E93] text-[14px]">A clínica entrará em contato para confirmar.</p>
+                  <h3 className="text-[18px] font-semibold text-[#1C1C1E] mb-1.5 tracking-tight">
+                    {scheduleMode === 'reschedule' ? 'Pedido Enviado' : 'Solicitação Enviada'}
+                  </h3>
+                  <p className="text-[#8E8E93] text-[14px]">
+                    {scheduleMode === 'reschedule'
+                      ? 'A clínica vai revisar o novo horário e retornar para você.'
+                      : 'A clínica entrará em contato para confirmar.'}
+                  </p>
                 </div>
               ) : (
                 <div className="px-5 pb-6 pt-3">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">Solicitar Consulta</h3>
+                    <div>
+                      <h3 className="text-[18px] font-semibold text-[#1C1C1E] tracking-tight">
+                        {scheduleMode === 'reschedule' ? 'Reagendar Consulta' : 'Solicitar Consulta'}
+                      </h3>
+                      {scheduleTargetAppointment && (
+                        <p className="text-[#8E8E93] text-[12px] mt-1">
+                          Atual: {formatDateBR(scheduleTargetAppointment.start_time)} às {formatTimeBR(scheduleTargetAppointment.start_time)}
+                        </p>
+                      )}
+                    </div>
                     <button
-                      onClick={() => setShowScheduleModal(false)}
+                      onClick={closeScheduleModal}
                       className="w-8 h-8 bg-[#E5E5EA] rounded-full flex items-center justify-center active:scale-90 transition-transform"
                     >
                       <X size={16} className="text-[#8E8E93]" />
@@ -1303,7 +1496,9 @@ export function PatientPortal() {
 
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-[#8E8E93] text-[13px] font-medium mb-2">Data Preferencial</label>
+                      <label className="block text-[#8E8E93] text-[13px] font-medium mb-2">
+                        {scheduleMode === 'reschedule' ? 'Nova Data Preferencial' : 'Data Preferencial'}
+                      </label>
                       <input
                         type="date"
                         value={scheduleForm.preferred_date}
@@ -1326,9 +1521,11 @@ export function PatientPortal() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[#8E8E93] text-[13px] font-medium mb-2">Observações</label>
+                      <label className="block text-[#8E8E93] text-[13px] font-medium mb-2">
+                        {scheduleMode === 'reschedule' ? 'Preferências' : 'Observações'}
+                      </label>
                       <textarea
-                        placeholder="Motivo da consulta..."
+                        placeholder={scheduleMode === 'reschedule' ? 'Conte qual horário funciona melhor para você...' : 'Motivo da consulta...'}
                         value={scheduleForm.notes}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, notes: e.target.value })}
                         rows={3}
@@ -1343,7 +1540,7 @@ export function PatientPortal() {
                       {scheduleSubmitting ? (
                         <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       ) : (
-                        'Enviar Solicitação'
+                        scheduleMode === 'reschedule' ? 'Enviar Pedido de Reagendamento' : 'Enviar Solicitação'
                       )}
                     </button>
                   </div>
@@ -1455,7 +1652,7 @@ function PortalStatCard({ value, label }: { value: number; label: string }) {
   );
 }
 
-function PortalAppointmentRow({ appointment, formatDate, formatTime, statusLabel, past }: any) {
+function PortalAppointmentRow({ appointment, formatDate, formatTime, statusLabel, past, actionContent, actionNotice }: any) {
   const s = statusLabel(appointment.status);
   const statusColors: Record<string, string> = {
     'SCHEDULED': 'bg-[#007AFF]/10 text-[#007AFF]',
@@ -1483,6 +1680,14 @@ function PortalAppointmentRow({ appointment, formatDate, formatTime, statusLabel
       </div>
       {appointment.notes && (
         <p className="text-[#C7C7CC] text-[13px] mt-2 ml-[54px]">{appointment.notes}</p>
+      )}
+      {actionContent && !past && (
+        <div className="mt-3 ml-[54px]">
+          {actionContent}
+        </div>
+      )}
+      {actionNotice && !past && (
+        <p className="text-[#34C759] text-[12px] font-medium mt-1.5 ml-[54px]">{actionNotice}</p>
       )}
     </div>
   );

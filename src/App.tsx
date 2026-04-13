@@ -2622,14 +2622,11 @@ export default function App() {
                 patients={patients}
                 appointments={appointments}
                 nextAppointments={nextAppointments}
-                todayAppointmentsTotalCount={todayAppointmentsTotalCount}
                 todayAppointmentsRemainingCount={todayAppointmentsRemainingCount}
                 totalAppointmentsCount={appointments.length}
                 todayRevenue={dailyRevenue}
                 tomorrowUnconfirmedCount={tomorrowUnconfirmedCount}
                 tomorrowUnconfirmedAppointments={tomorrowUnconfirmedAppointments}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
                 openPatientRecord={openPatientRecord}
                 setIsModalOpen={setIsModalOpen}
                 setActiveTab={setActiveTab}

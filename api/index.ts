@@ -101,6 +101,7 @@ import {
   uploadPortalDocument,
   getIntakeForms,
   reviewIntakeForm,
+  confirmAppointment,
   cancelAppointment,
   rescheduleAppointment,
   sendPortalMessage,
@@ -157,6 +158,7 @@ app.get(['/portal/data', '/api/portal/data'], verifyPortalAuth, getPortalData);
 app.post(['/portal/intake', '/api/portal/intake'], verifyPortalAuth, submitIntakeForm);
 app.post(['/portal/consent', '/api/portal/consent'], verifyPortalAuth, signConsent);
 app.post(['/portal/request-appointment', '/api/portal/request-appointment'], verifyPortalAuth, requestAppointment);
+app.post(['/portal/confirm-appointment', '/api/portal/confirm-appointment'], verifyPortalAuth, confirmAppointment);
 app.post(['/portal/cancel-appointment', '/api/portal/cancel-appointment'], verifyPortalAuth, cancelAppointment);
 app.post(['/portal/reschedule-appointment', '/api/portal/reschedule-appointment'], verifyPortalAuth, rescheduleAppointment);
 app.post(['/portal/messages', '/api/portal/messages'], verifyPortalAuth, sendPortalMessage);
